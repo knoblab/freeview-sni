@@ -5,7 +5,7 @@
 
 # FreeView
 
-[![GitHub Release](https://img.shields.io/github/v/release/knoblab/freeview-sni?style=flat-square&color=5865F2)](https://github.com/knoblab/freeview-sni/releases/latest)
+[![GitHub Release](https://img.shields.io/github/v/release/knoblab/freeview-sni?label=release&style=flat-square&color=5865F2)](https://github.com/knoblab/freeview-sni/releases/latest)
 
 Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI 기반 네트워크 차단을 우회하여 네트워크 접근성과 DNS 보안을 제공하는 유저스페이스 터널링 프로그램입니다.
 
