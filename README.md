@@ -1,9 +1,11 @@
 > [!NOTE]
-> 2.0.0 이하의 버전은 [https://github.com/qpi-labels/freeview-sni](https://github.com/qpi-labels/freeview-sni)에서 확인하실 수 있습니다.
+> 2.0.0 이하의 버전은 [https://github.com/knoblab/freeview-sni](https://github.com/knoblab/freeview-sni)에서 확인하실 수 있습니다.
 > `freeview-sni`의 향후 업데이트 및 유지보수는 본 리포지토리에서 진행될 예정입니다.
 
 
 # FreeView
+
+[![GitHub Release](https://img.shields.io/github/v/release/knoblab/freeview-sni?style=flat-square&color=5865F2)](https://github.com/knoblab/freeview-sni/releases/latest)
 
 Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI 기반 네트워크 차단을 우회하여 네트워크 접근성과 DNS 보안을 제공하는 유저스페이스 터널링 프로그램입니다.
 
@@ -154,7 +156,7 @@ DPI(Deep Packet Inspection) 검열 장비는 주로 TLS 핸드셰이크의 첫 �
 ## 다운로드 및 설치 (Download & Installation)
 
 ### 1. 릴리즈 버전 실행
-1. [GitHub Releases 공식 다운로드 페이지](https://github.com/qpi-labels/freeview-sni/releases)로 이동합니다.
+1. [GitHub Releases 공식 다운로드 페이지](https://github.com/knoblab/freeview-sni/releases)로 이동합니다.
 2. 최신 버전의 **`FreeView Setup 2.1.0.exe`**를 확보합니다.
 3. 시스템 수준의 프록시 레지스트리 수정을 위해 관리자 권한(UAC)을 승인해 주셔야 합니다.
 
