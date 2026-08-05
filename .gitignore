@@ -1,4 +1,4 @@
-dnode_modules/
+node_modules/
 build/
 dist/
 dist-electron/

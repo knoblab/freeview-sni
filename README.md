@@ -1,5 +1,5 @@
 > [!NOTE]
-> 2.0.0 이하의 버전은 [https://github.com/knoblab/freeview-sni](https://github.com/knoblab/freeview-sni)에서 확인하실 수 있습니다.
+> 2.0.0 이하의 버전은 [https://github.com/qpi-labels/freeview-sni](https://github.com/qpi-labels/freeview-sni)에서 확인하실 수 있습니다.
 > `freeview-sni`의 향후 업데이트 및 유지보수는 본 리포지토리에서 진행될 예정입니다.
 
 
