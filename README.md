@@ -1,3 +1,8 @@
+> [!NOTE]
+> 2.0.0 이하의 버전은 [https://github.com/qpi-labels/freeview-sni](https://github.com/qpi-labels/freeview-sni)에서 확인하실 수 있습니다.
+> `freeview-sni`의 향후 업데이트 및 유지보수는 본 리포지토리에서 진행될 예정입니다.
+
+
 # FreeView
 
 Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI 기반 네트워크 차단을 우회하여 네트워크 접근성과 DNS 보안을 제공하는 유저스페이스 터널링 프로그램입니다.
