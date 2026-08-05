@@ -150,7 +150,7 @@ DPI(Deep Packet Inspection) 검열 장비는 주로 TLS 핸드셰이크의 첫 �
 
 ### 1. 릴리즈 버전 실행
 1. [GitHub Releases 공식 다운로드 페이지](https://github.com/qpi-labels/freeview-sni/releases)로 이동합니다.
-2. 최신 버전의 **`FreeView Setup 2.0.0.exe`**를 확보합니다.
+2. 최신 버전의 **`FreeView Setup 2.1.0.exe`**를 확보합니다.
 3. 시스템 수준의 프록시 레지스트리 수정을 위해 관리자 권한(UAC)을 승인해 주셔야 합니다.
 
 > [!NOTE]

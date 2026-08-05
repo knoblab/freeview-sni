@@ -663,7 +663,7 @@ function updateTrayMenu() {
   if (!tray) return;
   const statusLabel = isServiceRunning ? '● 보호 활성화' : '○ 대기 중';
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'FreeView 2.0.0', enabled: false },
+    { label: 'FreeView 2.1.0', enabled: false },
     { label: statusLabel, enabled: false },
     { type: 'separator' },
     { label: '앱 열기', click: () => {
