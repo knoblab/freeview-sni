@@ -1,0 +1,649 @@
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/variable/pretendardvariable.css');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Nanum+Gothic+Coding:wght@400;700&display=swap');
+
+/* ==========================================================================
+   PDF-DS (PDF Design System)
+   ========================================================================== */
+
+:root {
+  /* ========================================================================
+     1. DESIGN TOKENS
+     ======================================================================== */
+  
+  /* 1.1. Spacing */
+  --space-025: 2px;
+  --space-050: 4px;
+  --space-100: 8px;
+  --space-150: 12px;
+  --space-200: 16px;
+  --space-300: 24px;
+  --space-400: 32px;
+  --space-600: 48px;
+  --space-800: 64px;
+
+  /* 1.2. Colors - Background & Border */
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f4f4f5;
+  --color-border-default: #e4e4e7;
+  --color-border-hover: #a1a1aa;
+
+  /* 1.3. Colors - Typography */
+  --color-text-primary: #09090b;
+  --color-text-secondary: #71717a;
+  
+  /* 1.4. Colors - Semantic / Functional */
+  --color-functional-red: #ad1d1d;
+  --color-red-hover: #c21f1f;
+  --color-red-active: #941a1a;
+  --color-red-light: #fef2f2;
+
+  /* 1.5. Elevation & Effects (Hardware Bevel & Glow) */
+  --shadow-hardware-bevel: inset 0 1px 0 rgba(255, 255, 255, 1), inset 0 -1px 0 var(--color-border-default), 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-hardware-bevel-active: inset 0 1px 0 var(--color-border-default), inset 0 -1px 0 rgba(255, 255, 255, 1), 0 1px 1px rgba(0, 0, 0, 0.02);
+  --shadow-functional-glow: 0 0 16px 0 rgba(173, 29, 29, 0.3);
+  --shadow-functional-glow-active: 0 0 8px 0 rgba(148, 26, 26, 0.6);
+  --bg-sidebar: rgba(255, 255, 255, 0.65);
+
+  /* 1.6. Typography */
+  --font-sans: "Pretendard Variable", Pretendard, "Geist Sans", -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", var(--font-sans);
+
+  /* 1.6. Patterns */
+  --blueprint-grid-pattern: 
+    linear-gradient(to right, rgba(229, 231, 235, 0.25) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(229, 231, 235, 0.25) 1px, transparent 1px);
+}
+
+[data-theme='dark'] {
+  /* Dark Mode Achromatic Colors */
+  --color-bg-primary: #09090b;
+  --color-bg-secondary: #18181b;
+  --color-border-default: #27272a;
+  --color-border-hover: #52525b;
+
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #a1a1aa;
+  
+  /* Dark Mode Functional Red adjustments (if needed, though keeping the core hue) */
+  --color-functional-red: #ad1d1d;
+  --color-red-hover: #c21f1f;
+  --color-red-active: #941a1a;
+  --color-red-light: #2c0b0b;
+
+  /* Dark Mode Elevation & Effects */
+  --shadow-hardware-bevel: inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 0 -1px 0 rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-hardware-bevel-active: inset 0 1px 0 rgba(0, 0, 0, 0.5), inset 0 -1px 0 rgba(255, 255, 255, 0.05), 0 1px 1px rgba(0, 0, 0, 0.1);
+  --shadow-functional-glow: 0 0 20px 0 rgba(173, 29, 29, 0.5);
+  --shadow-functional-glow-active: 0 0 10px 0 rgba(148, 26, 26, 0.8);
+  --bg-sidebar: rgba(9, 9, 11, 0.65);
+
+  /* Dark Mode Blueprint Grid (#27272A with 15% opacity) */
+  --blueprint-grid-pattern: 
+    linear-gradient(to right, rgba(39, 39, 42, 0.15) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(39, 39, 42, 0.15) 1px, transparent 1px);
+}
+
+/* ==========================================================================
+   2. BASE & RESET
+   ========================================================================== */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+/* Custom hide scrollbar implementation */
+::-webkit-scrollbar {
+  width: 0px;
+  background: transparent;
+}
+
+
+/* ==========================================================================
+   3. LAYOUT SYSTEM
+   ========================================================================== */
+
+.pdf-app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pdf-selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+@media (min-width: 1200px) {
+  .pdf-app {
+    flex-direction: row;
+    height: 100vh;
+    overflow: hidden;
+  }
+}
+
+.pdf-sidebar {
+  background-color: var(--bg-sidebar);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-right: 1px solid var(--color-border-default);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 20;
+  background-image: var(--blueprint-grid-pattern);
+  background-size: var(--space-300) var(--space-300);
+  overflow-y: auto;
+}
+
+@media (min-width: 1200px) {
+  .pdf-sidebar {
+    width: 25%;
+    height: 100%;
+  }
+}
+
+@media (max-width: 1199px) {
+  .pdf-sidebar {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 80vh;
+    border-top-left-radius: 24px;
+    border-top-right-radius: 24px;
+    box-shadow: 0 -4px 24px rgba(0,0,0,0.15);
+    z-index: 1001; /* Above the overlay */
+    border-right: none;
+    border-top: 1px solid var(--color-border-default);
+  }
+  .pdf-sidebar.mobile-nav-open {
+    display: flex;
+    animation: slideUpNav 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  
+  @keyframes slideUpNav {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+}
+
+.pdf-main-view {
+  flex: 1;
+  background-color: var(--color-bg-primary);
+  overflow-y: auto;
+}
+
+@media (min-width: 1200px) {
+  .pdf-main-view {
+    width: 75%;
+    padding: 0;
+    background-color: var(--bg-sidebar);
+    background-image: var(--blueprint-grid-pattern);
+    background-size: 24px 24px;
+    background-position: top left;
+  }
+  .pdf-main-content {
+    width: 85%;
+    max-width: 1000px;
+    border-right: 1px solid var(--color-border-default);
+    padding: var(--space-400) var(--space-600);
+    min-height: 100%;
+    background-color: var(--color-bg-primary);
+  }
+}
+
+@media (max-width: 1199px) {
+  .pdf-main-view {
+    width: 100%;
+    padding: 0;
+  }
+  .pdf-main-content {
+    width: 100%;
+    border-right: none;
+    padding: var(--space-400) var(--space-300);
+    background-color: var(--color-bg-primary);
+  }
+}
+
+
+/* ==========================================================================
+   4. TYPOGRAPHY
+   ========================================================================== */
+
+.pdf-text-heading-72 { font-size: 72px; line-height: 1.1; letter-spacing: -0.02em; font-weight: 800; font-family: var(--font-sans); }
+.pdf-text-heading-32 { font-size: 32px; line-height: 1.25; letter-spacing: -0.015em; font-weight: 700; font-family: var(--font-sans); }
+.pdf-text-heading-24 { font-size: 24px; line-height: 1.3; font-weight: 700; font-family: var(--font-sans); }
+.pdf-text-label-16 { font-size: 16px; line-height: 1.0; letter-spacing: 0em; font-family: var(--font-sans); font-weight: 600; }
+.pdf-text-copy-14 { font-size: 14px; line-height: 1.5; letter-spacing: 0.005em; font-family: var(--font-sans); }
+
+.pdf-font-mono, .pdf-text-label-14-mono, .pdf-text-copy-13-mono { font-family: var(--font-mono); }
+.pdf-text-label-14-mono { font-size: 14px; line-height: 1.0; letter-spacing: 0em; }
+.pdf-text-copy-13-mono { font-size: 13px; line-height: 1.4; letter-spacing: 0em; }
+
+/* Typography Colors */
+.pdf-text-red { color: var(--color-functional-red); }
+.pdf-text-muted { color: var(--color-text-secondary); }
+
+
+/* ==========================================================================
+   5. COMPONENTS
+   ========================================================================== */
+
+/* Buttons */
+.pdf-btn-primary {
+  /* Default to MD size */
+  --btn-height: 44px;
+  --btn-hover-radius: 14px;
+  --btn-active-radius: 8px;
+  height: var(--btn-height);
+  padding: 0 var(--space-200);
+  background-color: var(--color-functional-red);
+  color: var(--color-bg-primary);
+  border: none;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  border-radius: calc(var(--btn-height) / 2); /* Capsule shape as the base */
+  transition: border-radius 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              background-color 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-100);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.pdf-btn-primary:hover {
+  background-color: var(--color-red-hover);
+  border-radius: var(--btn-hover-radius);
+}
+
+.pdf-btn-primary:active {
+  background-color: var(--color-red-active);
+  border-radius: var(--btn-active-radius);
+}
+
+.pdf-btn-primary:focus-visible {
+  outline: 2px solid var(--color-functional-red);
+  outline-offset: 2px;
+}
+
+.pdf-secondary-btn {
+  /* Default to MD size */
+  height: 44px;
+  padding: 0 var(--space-200);
+  border: 1px solid var(--color-border-default);
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-100);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.pdf-secondary-btn:hover {
+  background-color: var(--color-bg-secondary);
+  border-color: var(--color-border-hover);
+}
+
+/* Button & Input Size Modifiers */
+.pdf-btn-xs { --btn-height: 32px; --btn-hover-radius: 10px; --btn-active-radius: 4px; height: var(--btn-height); padding: 0 var(--space-100); font-size: 12px; }
+.pdf-input-xs { height: 32px; padding: 0 var(--space-100); font-size: 12px; }
+
+.pdf-btn-sm { --btn-height: 40px; --btn-hover-radius: 12px; --btn-active-radius: 8px; height: var(--btn-height); padding: 0 var(--space-150); font-size: 13px; }
+.pdf-input-sm { height: 40px; padding: 0 var(--space-150); font-size: 13px; }
+
+.pdf-btn-md { --btn-height: 44px; --btn-hover-radius: 14px; --btn-active-radius: 8px; height: var(--btn-height); padding: 0 var(--space-200); font-size: 14px; }
+.pdf-input-md { height: 44px; padding: 0 var(--space-200); font-size: 14px; }
+
+.pdf-btn-lg { --btn-height: 48px; --btn-hover-radius: 16px; --btn-active-radius: 12px; height: var(--btn-height); padding: 0 24px; font-size: 15px; }
+.pdf-input-lg { height: 48px; padding: 0 24px; font-size: 15px; }
+
+.pdf-btn-xl { --btn-height: 56px; --btn-hover-radius: 20px; --btn-active-radius: 12px; height: var(--btn-height); padding: 0 32px; font-size: 16px; }
+.pdf-input-xl { height: 56px; padding: 0 32px; font-size: 16px; }
+
+.pdf-secondary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Inputs & Form Elements */
+.pdf-input {
+  width: 100%;
+  max-width: 400px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-default);
+  padding: 12px 16px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  box-sizing: border-box;
+}
+
+.pdf-input:focus {
+  border-color: var(--color-text-primary);
+  box-shadow: 0 0 0 2px var(--color-border-hover);
+}
+
+.pdf-input:disabled {
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* Panels */
+.pdf-panel {
+  background-color: var(--color-bg-primary);
+  border: 1px solid var(--color-border-default);
+  box-shadow: var(--shadow-hardware-bevel);
+  padding: var(--space-200);
+  margin-bottom: var(--space-300);
+  border-radius: 4px; /* 하드웨어 특유의 미세한 곡률 추가 */
+}
+
+.pdf-panel-header {
+  border-bottom: 1px solid var(--color-border-default);
+  padding-bottom: var(--space-150);
+  margin-bottom: var(--space-150);
+}
+
+/* Navigation */
+.pdf-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-100) var(--space-150);
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  color: var(--color-text-secondary);
+  transition: all 0.2s ease;
+}
+
+.pdf-nav-item.active {
+  background-color: var(--color-bg-secondary);
+  border-left-color: var(--color-functional-red);
+  color: var(--color-text-primary);
+}
+
+.pdf-nav-item:hover:not(.active):not(.disabled) {
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+}
+
+.pdf-nav-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pdf-nav-group-header {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  padding: var(--space-150) var(--space-150) var(--space-050) var(--space-150);
+  margin-top: var(--space-150);
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  transition: color 0.2s ease;
+}
+
+.pdf-nav-group-header:hover {
+  color: var(--color-functional-red);
+}
+
+.pdf-chevron {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.2s ease;
+  fill: currentColor;
+}
+
+.pdf-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.pdf-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-default);
+  border-radius: 4px;
+  margin-left: 8px;
+}
+
+/* Advanced Grid Background */
+.pdf-grid-bg {
+  position: relative;
+}
+.pdf-grid-bg::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-image: var(--blueprint-grid-pattern);
+  background-size: var(--space-300) var(--space-300);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.pdf-content-relative {
+  position: relative;
+  z-index: 10;
+}
+
+/* Footer */
+.pdf-footer {
+  border-top: 1px solid var(--color-border-default);
+  padding-top: var(--space-200);
+  margin-top: var(--space-400);
+  display: flex;
+  justify-content: space-between;
+}
+
+/* Splitter */
+.pdf-splitter {
+  width: 4px;
+  background-color: var(--color-border-default);
+  cursor: col-resize;
+  transition: background-color 0.2s;
+  z-index: 30;
+  display: none;
+}
+@media (min-width: 1200px) {
+  .pdf-splitter {
+    display: flex;
+  }
+}
+.pdf-splitter:hover, .pdf-splitter.active {
+  background-color: var(--color-functional-red);
+}
+
+/* Indicators */
+.pdf-indicator-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--color-functional-red);
+}
+
+/* Table */
+.pdf-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: var(--space-200);
+  margin-bottom: var(--space-300);
+}
+.pdf-table th, .pdf-table td {
+  border: 1px solid var(--color-border-default);
+  padding: var(--space-150);
+  text-align: left;
+}
+.pdf-table th {
+  background-color: var(--color-bg-secondary);
+}
+
+/* Code Block */
+.pdf-code-block {
+  font-family: var(--font-mono);
+  background-color: var(--color-bg-secondary);
+  padding: var(--space-050) var(--space-100);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+
+/* ==========================================================================
+   6. UTILITIES
+   ========================================================================== */
+
+/* Flexbox */
+.pdf-flex-row { display: flex; flex-direction: row; }
+.pdf-flex-col { display: flex; flex-direction: column; }
+.pdf-items-center { align-items: center; }
+.pdf-items-start { align-items: flex-start; }
+.pdf-justify-between { justify-content: space-between; }
+.pdf-justify-center { justify-content: center; }
+
+/* Gap */
+.pdf-gap-050 { gap: var(--space-050); }
+.pdf-gap-100 { gap: var(--space-100); }
+.pdf-gap-150 { gap: var(--space-150); }
+.pdf-gap-200 { gap: var(--space-200); }
+.pdf-gap-300 { gap: var(--space-300); }
+
+/* Margin Bottom */
+.pdf-mb-100 { margin-bottom: var(--space-100); }
+.pdf-mb-150 { margin-bottom: var(--space-150); }
+.pdf-mb-200 { margin-bottom: var(--space-200); }
+.pdf-mb-300 { margin-bottom: var(--space-300); }
+.pdf-mb-400 { margin-bottom: var(--space-400); }
+
+/* Margin Top */
+.pdf-mt-100 { margin-top: var(--space-100); }
+.pdf-mt-200 { margin-top: var(--space-200); }
+.pdf-mt-300 { margin-top: var(--space-300); }
+.pdf-mt-400 { margin-top: var(--space-400); }
+
+/* Padding */
+.pdf-p-200 { padding: var(--space-200); }
+.pdf-p-300 { padding: var(--space-300); }
+.pdf-px-200 { padding-left: var(--space-200); padding-right: var(--space-200); }
+.pdf-py-200 { padding-top: var(--space-200); padding-bottom: var(--space-200); }
+
+/* Borders & Backgrounds */
+.pdf-border { border: 1px solid var(--color-border-default); }
+.pdf-border-bottom { border-bottom: 1px solid var(--color-border-default); }
+.pdf-border-top { border-top: 1px solid var(--color-border-default); }
+.pdf-border-left { border-left: 1px solid var(--color-border-default); }
+.pdf-bg-secondary { background-color: var(--color-bg-secondary); }
+
+/* List */
+.pdf-list-disc {
+  list-style-type: disc;
+  padding-left: var(--space-300);
+  margin-top: var(--space-100);
+  margin-bottom: var(--space-200);
+}
+.pdf-list-disc li {
+  margin-bottom: var(--space-100);
+}
+
+
+/* Layout & Position */
+.pdf-relative { position: relative; }
+.pdf-absolute { position: absolute; }
+.pdf-fixed { position: fixed; }
+.pdf-inset-0 { top: 0; right: 0; bottom: 0; left: 0; }
+.pdf-inset-center { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.pdf-w-full { width: 100%; }
+.pdf-h-full { height: 100%; }
+.pdf-flex-wrap { flex-wrap: wrap; }
+.pdf-flex-shrink-0 { flex-shrink: 0; }
+.pdf-overflow-hidden { overflow: hidden; }
+
+/* Typography */
+.pdf-font-bold { font-weight: bold; }
+.pdf-text-center { text-align: center; }
+.pdf-text-right { text-align: right; }
+
+/* Visuals & Shapes */
+.pdf-radius-sm { border-radius: 4px; }
+.pdf-radius-md { border-radius: 8px; }
+.pdf-radius-lg { border-radius: 16px; }
+.pdf-radius-full { border-radius: 50%; }
+.pdf-bg-red { background-color: var(--color-functional-red); }
+
+/* Shadows */
+.pdf-shadow-bevel { box-shadow: var(--shadow-hardware-bevel); }
+.pdf-shadow-bevel-active { box-shadow: var(--shadow-hardware-bevel-active); }
+.pdf-shadow-glow { box-shadow: var(--shadow-functional-glow); }
+.pdf-shadow-glow-active { box-shadow: var(--shadow-functional-glow-active); }
+
+/* Interaction */
+.pdf-cursor-pointer { cursor: pointer; }
+.pdf-pointer-events-none { pointer-events: none; }
+
+/* Additional Padding */
+.pdf-p-050 { padding: var(--space-050); }
+.pdf-p-100 { padding: var(--space-100); }
+.pdf-p-150 { padding: var(--space-150); }
+
+
+/* ==========================================================================
+   7. ANIMATIONS
+   ========================================================================== */
+
+@keyframes pdfPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .5; }
+}
+.pdf-animate-pulse {
+  animation: pdfPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pdfFadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.pdf-animate-fade-in {
+  animation: pdfFadeIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+

@@ -1,0 +1,4 @@
+# git archive 실행 시 배포용 압축 파일에서 제외할 개발 메타데이터 지정
+.gitattributes export-ignore
+.gitignore export-ignore
+.github/ export-ignore

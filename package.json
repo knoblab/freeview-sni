@@ -1,0 +1,64 @@
+{
+  "name": "freeview",
+  "private": true,
+  "version": "2.0.0",
+  "type": "commonjs",
+  "main": "main.js",
+  "scripts": {
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron:build": "npm run build && electron-builder",
+    "pack:source": "git archive --format=zip HEAD -o freeview-source.zip"
+  },
+  "dependencies": {
+    "lucide-react": "^0.546.0",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.4",
+    "concurrently": "^9.1.0",
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.qpi.freeview",
+    "productName": "FreeView",
+    "publish": null,
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "main.js",
+      "preload.js",
+      "logo.ico",
+      "refresh-proxy.exe"
+    ],
+    "asarUnpack": [
+      "refresh-proxy.exe",
+      "logo.ico"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "logo.ico",
+      "requestedExecutionLevel": "requireAdministrator"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "FreeView",
+      "installerIcon": "logo.ico",
+      "uninstallerIcon": "logo.ico"
+    }
+  }
+}

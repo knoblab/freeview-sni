@@ -1,0 +1,14 @@
+dnode_modules/
+build/
+dist/
+dist-electron/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
