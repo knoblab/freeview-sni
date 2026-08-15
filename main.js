@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, Tray, Menu, powerMonitor } = require('elect
 const path = require('path');
 const net = require('net');
 const https = require('https');
+const dgram = require('dgram');
 const os = require('os');
 const { exec, execSync, execFile } = require('child_process');
 const fs = require('fs');
@@ -28,6 +29,13 @@ const PROXY_LISTEN_PORT = 8080;
 const BUFFER_SIZE = 32768;
 const DOH_ENDPOINT = "https://1.1.1.1/dns-query";
 const DOH_TIMEOUT_MS = 3000;
+
+const EXTERNAL_DNS_PRIMARY = "1.1.1.1";
+const EXTERNAL_DNS_SECONDARY = "8.8.8.8";
+const EXTERNAL_DNS_IPV6_PRIMARY = "2606:4700:4700::1111";
+const EXTERNAL_DNS_IPV6_SECONDARY = "2606:4700:4700::1001";
+
+let activeInterfaceName = null;
 
 // DoH를 우회할 로컬/내부 도메인 접미사 목록
 const DOH_LOCAL_SUFFIXES = [
@@ -272,6 +280,124 @@ function resolveViaDoH(hostname) {
 }
 
 // ─────────────────────────────────────────────────────────
+// 시스템 DNS 관리 — 활성 인터페이스의 DNS를 Cloudflare로 변경/DHCP 복원
+// 1.3.0의 netsh 기반 DNS 변경 기능 복원
+// ─────────────────────────────────────────────────────────
+
+/**
+ * 활성 네트워크 인터페이스를 감지 (비동기).
+ * UDP 소켓으로 로컬 IP를 알아낸 뒤 PowerShell로 인터페이스 이름을 조회.
+ */
+function getActiveInterface() {
+  return new Promise((resolve) => {
+    const sock = dgram.createSocket('udp4');
+    let resolved = false;
+
+    const fail = () => {
+      if (resolved) return;
+      resolved = true;
+      try { sock.close(); } catch (e) {}
+      addLog("인터페이스를 찾을 수 없습니다.");
+      resolve(false);
+    };
+
+    sock.on('error', fail);
+
+    sock.connect(80, '1.1.1.1', () => {
+      let localIp;
+      try {
+        localIp = sock.address().address;
+        sock.close();
+      } catch (e) {
+        fail();
+        return;
+      }
+
+      const cmd = `powershell -NoProfile -NonInteractive -Command "Get-NetIPAddress -IPAddress '${localIp}' | Select-Object -ExpandProperty InterfaceAlias"`;
+      exec(cmd, { windowsHide: true }, (err, stdout) => {
+        if (resolved) return;
+        resolved = true;
+        if (!err && stdout && stdout.trim()) {
+          activeInterfaceName = stdout.trim();
+          addLog(`인터페이스 감지: ${activeInterfaceName}`);
+          resolve(true);
+        } else {
+          addLog("인터페이스를 찾을 수 없습니다.");
+          resolve(false);
+        }
+      });
+    });
+  });
+}
+
+/**
+ * 활성 네트워크 인터페이스를 감지 (동기). 종료/자가복구 경로에서 사용.
+ */
+function getActiveInterfaceSync() {
+  try {
+    const stdout = execSync(
+      'powershell -NoProfile -NonInteractive -Command "' +
+        '$s = New-Object System.Net.Sockets.UdpClient; ' +
+        "$s.Connect('1.1.1.1', 80); " +
+        '$ip = $s.Client.LocalEndPoint.Address.ToString(); ' +
+        '$s.Close(); ' +
+        '(Get-NetIPAddress -IPAddress $ip).InterfaceAlias"',
+      { windowsHide: true, timeout: 10000 }
+    ).toString().trim();
+    if (stdout) {
+      activeInterfaceName = stdout;
+      return true;
+    }
+  } catch (e) { /* ignore */ }
+  return false;
+}
+
+function setDns() {
+  return new Promise((resolve) => {
+    if (!activeInterfaceName) { resolve(); return; }
+    addLog("DNS 라우팅 재설정 (Cloudflare)");
+    const name = activeInterfaceName;
+    // IPv4 DNS 설정
+    exec(`netsh interface ip set dns name="${name}" static ${EXTERNAL_DNS_PRIMARY}`, { windowsHide: true }, () => {
+      exec(`netsh interface ip add dns name="${name}" ${EXTERNAL_DNS_SECONDARY} index=2`, { windowsHide: true }, () => {
+        // IPv6 DNS 설정 (IPv6 누수 방지)
+        exec(`netsh interface ipv6 set dns name="${name}" static ${EXTERNAL_DNS_IPV6_PRIMARY}`, { windowsHide: true }, () => {
+          exec(`netsh interface ipv6 add dns name="${name}" ${EXTERNAL_DNS_IPV6_SECONDARY} index=2`, { windowsHide: true }, () => {
+            resolve();
+          });
+        });
+      });
+    });
+  });
+}
+
+function restoreDns() {
+  return new Promise((resolve) => {
+    if (!activeInterfaceName) { resolve(); return; }
+    addLog("DNS 설정 복원 (DHCP)");
+    const name = activeInterfaceName;
+    // IPv4 복구
+    exec(`netsh interface ip set dns name="${name}" dhcp`, { windowsHide: true }, () => {
+      // IPv6 복구
+      exec(`netsh interface ipv6 set dns name="${name}" dhcp`, { windowsHide: true }, () => {
+        resolve();
+      });
+    });
+  });
+}
+
+function restoreDnsSync() {
+  if (!activeInterfaceName) return;
+  const name = activeInterfaceName;
+  try {
+    execSync(`netsh interface ip set dns name="${name}" dhcp`, { windowsHide: true });
+  } catch (e) { /* ignore */ }
+  try {
+    execSync(`netsh interface ipv6 set dns name="${name}" dhcp`, { windowsHide: true });
+  } catch (e) { /* ignore */ }
+}
+
+// ─────────────────────────────────────────────────────────
 // C#으로 빌드된 네이티브 exe를 호출해 시스템 프록시 설정을 5ms 만에 즉시 반영
 // ─────────────────────────────────────────────────────────
 
@@ -508,6 +634,14 @@ async function startService() {
   try {
     addLog("System initializing...");
 
+    // 활성 네트워크 인터페이스 감지
+    const interfaceFound = await getActiveInterface();
+    if (!interfaceFound) {
+      addLog("Error: No active interface found.");
+      updateStatus(false);
+      return;
+    }
+
     // 빠른 부팅: 일단 포트 바인딩 시도, 충돌(EADDRINUSE) 시에만 netstat(느림)를 통한 프로세스 정리 후 재시도
     try {
       await startProxyServer();
@@ -521,6 +655,7 @@ async function startService() {
       }
     }
 
+    await setDns();
     await setProxy();
 
     cleanupDone = false; // 새 세션 시작, cleanup 플래그 리셋
@@ -536,6 +671,7 @@ async function stopService() {
   try {
     addLog("Stopping services...");
     stopProxyServer();
+    await restoreDns();
     await restoreProxy();
     dnsCache.clear();
     addLog("✓ System standby.");
@@ -552,6 +688,9 @@ async function stopService() {
 function stopServiceSync() {
   try {
     stopProxyServer();
+
+    // DNS 복원
+    restoreDnsSync();
 
     // PAC 설정 롤백: AutoConfigURL 삭제
     try {
@@ -620,6 +759,11 @@ async function startupCleanup() {
     // 2. PAC 파일 잔여물 삭제
     deletePacFileSync();
 
+    // 2.5. 시스템 DNS 복원 (이전 세션에서 변경된 DNS가 남아있을 수 있음)
+    if (getActiveInterfaceSync()) {
+      restoreDnsSync();
+    }
+
     // 3. DNS 캐시 초기화
     dnsCache.clear();
 
@@ -663,7 +807,7 @@ function updateTrayMenu() {
   if (!tray) return;
   const statusLabel = isServiceRunning ? '● 보호 활성화' : '○ 대기 중';
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'FreeView 2.1.0', enabled: false },
+    { label: 'FreeView 2.1.1', enabled: false },
     { label: statusLabel, enabled: false },
     { type: 'separator' },
     { label: '앱 열기', click: () => {
