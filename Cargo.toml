@@ -1,0 +1,48 @@
+[package]
+name = "freeview"
+version = "3.1.0"
+edition = "2021"
+authors = ["QuarterPi", "knoblab", "Contributors"]
+description = "High-performance native Windows anti-censorship SNI desync proxy with modern PDF-DS UI"
+
+[[bin]]
+name = "freeview"
+path = "src/main.rs"
+
+[[bin]]
+name = "freeview-setup"
+path = "src/installer.rs"
+
+[dependencies]
+tauri = { version = "2.2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2.2"
+tokio = { version = "1.43", features = ["rt-multi-thread", "net", "io-util", "time", "macros", "sync"] }
+hickory-resolver = { version = "0.24", default-features = false, features = ["tokio-runtime", "system-config"] }
+winreg = "0.52"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dependencies.windows-sys]
+version = "0.59"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Networking_WinInet",
+    "Win32_System_Console",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Controls",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+winresource = "0.1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "unwind"
+strip = true

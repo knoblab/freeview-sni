@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
+  "productName": "FreeView",
+  "version": "3.1.0",
+  "identifier": "com.qpi.freeview",
+  "build": {
+    "frontendDist": "ui/dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "FreeView",
+        "width": 380,
+        "height": 600,
+        "resizable": false,
+        "decorations": false,
+        "skipTaskbar": true,
+        "visible": false,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "icon": [
+      "icons/icon.ico"
+    ]
+  }
+}
