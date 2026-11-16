@@ -17,8 +17,12 @@ const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
 const CLIENT_HELLO_TIMEOUT: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
 const TUNNEL_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+const IDLE_TIMER_RESET_INTERVAL: Duration = Duration::from_secs(5);
+const HAPPY_EYEBALLS_STAGGER: Duration = Duration::from_millis(100);
 const MAX_HEADER_BYTES: usize = 8192;
 const MAX_CLIENT_HELLO_BYTES: usize = 32768;
+const RELAY_INIT_BUF_BYTES: usize = 16 * 1024;
+const RELAY_MAX_BUF_BYTES: usize = 128 * 1024;
 const MAX_CONCURRENT_CONNECTIONS: usize = 512;
 
 struct ConnectionGuard(Arc<AtomicUsize>);
@@ -389,20 +393,60 @@ where
     sanitized_headers
 }
 
-async fn relay_half<R, W>(mut reader: R, mut writer: W)
+async fn relay_half<R, W>(reader: R, writer: W)
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
-    let mut buf = [0u8; 8192];
+    relay_half_with_timeout(reader, writer, TUNNEL_IDLE_TIMEOUT).await;
+}
+
+/// 단방향 TCP 릴레이 루프.
+/// 유휴/소형 연결의 메모리 절약을 위해 16 KB 힙 버퍼로 시작하고,
+/// 연속 풀리드(bulk transfer) 감지 시 최대 128 KB까지 확장합니다.
+/// 매 읽기마다 타이머를 생성·해제하지 않고 단일 타이머를 주기적으로만 리셋합니다.
+async fn relay_half_with_timeout<R, W>(mut reader: R, mut writer: W, idle_timeout: Duration)
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut buf = vec![0u8; RELAY_INIT_BUF_BYTES];
+    let mut full_reads: u8 = 0;
+
+    let idle_sleep = tokio::time::sleep(idle_timeout);
+    tokio::pin!(idle_sleep);
+    let mut last_timer_reset = tokio::time::Instant::now();
+    let reset_interval = IDLE_TIMER_RESET_INTERVAL.min(idle_timeout / 4);
+
     loop {
-        match tokio::time::timeout(TUNNEL_IDLE_TIMEOUT, reader.read(&mut buf)).await {
-            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
-            Ok(Ok(n)) => {
-                if writer.write_all(&buf[..n]).await.is_err() {
-                    break;
-                }
+        let n = tokio::select! {
+            biased;
+            res = reader.read(&mut buf) => match res {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            },
+            _ = &mut idle_sleep => break,
+        };
+
+        if writer.write_all(&buf[..n]).await.is_err() {
+            break;
+        }
+
+        if last_timer_reset.elapsed() >= reset_interval {
+            let now = tokio::time::Instant::now();
+            idle_sleep.as_mut().reset(now + idle_timeout);
+            last_timer_reset = now;
+        }
+
+        if n == buf.len() && buf.len() < RELAY_MAX_BUF_BYTES {
+            full_reads = full_reads.saturating_add(1);
+            if full_reads >= 2 {
+                let next_len = (buf.len() * 2).min(RELAY_MAX_BUF_BYTES);
+                buf.resize(next_len, 0);
+                full_reads = 0;
             }
+        } else {
+            full_reads = 0;
         }
     }
     let _ = writer.shutdown().await;
@@ -523,7 +567,7 @@ async fn connect_any(addrs: &[SocketAddr]) -> io::Result<TcpStream> {
     join_set.spawn(connect_single(ordered[idx]));
     idx += 1;
 
-    let stagger = tokio::time::sleep(Duration::from_millis(250));
+    let stagger = tokio::time::sleep(HAPPY_EYEBALLS_STAGGER);
     tokio::pin!(stagger);
 
     loop {
@@ -540,7 +584,7 @@ async fn connect_any(addrs: &[SocketAddr]) -> io::Result<TcpStream> {
                         if idx < ordered.len() {
                             join_set.spawn(connect_single(ordered[idx]));
                             idx += 1;
-                            stagger.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(250));
+                            stagger.as_mut().reset(tokio::time::Instant::now() + HAPPY_EYEBALLS_STAGGER);
                         }
                     }
                     Err(_) => {}
@@ -549,7 +593,7 @@ async fn connect_any(addrs: &[SocketAddr]) -> io::Result<TcpStream> {
             _ = &mut stagger, if idx < ordered.len() => {
                 join_set.spawn(connect_single(ordered[idx]));
                 idx += 1;
-                stagger.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(250));
+                stagger.as_mut().reset(tokio::time::Instant::now() + HAPPY_EYEBALLS_STAGGER);
             }
         }
     }
@@ -611,5 +655,52 @@ mod tests {
         assert!(is_self_target(&loop_addrs, 8080));
         assert!(is_self_target(&v6_loop, 8080));
         assert!(!is_self_target(&external, 8080));
+    }
+
+    #[tokio::test]
+    async fn test_relay_bidirectional_large_payload() {
+        let client_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client_addr = client_listener.local_addr().unwrap();
+        let upstream_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = upstream_listener.local_addr().unwrap();
+
+        let payload_len = 2 * 1024 * 1024; // 2 MiB
+        let expected: Vec<u8> = (0..payload_len).map(|i| (i % 251) as u8).collect();
+        let expected_clone = expected.clone();
+
+        let upstream_task = tokio::spawn(async move {
+            let (mut sock, _) = upstream_listener.accept().await.unwrap();
+            sock.write_all(&expected_clone).await.unwrap();
+            sock.shutdown().await.unwrap();
+        });
+
+        let relay_task = tokio::spawn(async move {
+            let (proxy_client, _) = client_listener.accept().await.unwrap();
+            let proxy_upstream = TcpStream::connect(upstream_addr).await.unwrap();
+            let (_tx, mut rx) = watch::channel(false);
+            relay_bidirectional(proxy_client, proxy_upstream, &mut rx).await;
+        });
+
+        let mut client = TcpStream::connect(client_addr).await.unwrap();
+        let mut received = Vec::with_capacity(payload_len);
+        client.read_to_end(&mut received).await.unwrap();
+        drop(client);
+
+        upstream_task.await.unwrap();
+        relay_task.await.unwrap();
+
+        assert_eq!(received.len(), expected.len());
+        assert_eq!(received, expected);
+    }
+
+    #[tokio::test]
+    async fn test_relay_half_idle_timeout() {
+        let (tx, mut rx) = tokio::io::duplex(64);
+        let (mut sink, _sink_peer) = tokio::io::duplex(64);
+
+        let start = tokio::time::Instant::now();
+        relay_half_with_timeout(&mut rx, &mut sink, Duration::from_millis(80)).await;
+        assert!(start.elapsed() >= Duration::from_millis(70));
+        drop(tx);
     }
 }

@@ -1,4 +1,4 @@
-# FreeView 3.2 (Modern UI & Native Rust Edition)
+# FreeView 3.2.2 (Modern UI & Native Rust Edition)
 
 Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI 기반 네트워크 차단을 우회하여 자유로운 웹 서핑과 DNS 보안을 제공하는 초경량 유저스페이스 터널링 프로그램입니다.
 
@@ -7,8 +7,13 @@ Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI �
 
 ---
 
-## 🌟 주요 특징 및 3.2.0 개선 사항
+## 🌟 주요 특징 및 3.2.2 개선 사항
 
+* **고대역폭 프록시 릴레이 & 지연시간 최적화 (3.2.2)**:
+  * **적응형 릴레이 버퍼 (`16 KB -> 128 KB`) & 타이머 스래싱 제거**: 유휴/소형 연결의 메모리 효율을 유지하면서 대용량 스트리밍 시 시스템콜과 Tokio 타이머 휠 부하를 대폭 절감했습니다.
+  * **멀티스레드 Tokio 런타임 스케줄링 & `opt-level = 3`**: 코어 수에 맞춘 워커 스레드 확장(4~8개) 및 속도 최적화 컴파일 프로파일을 적용했습니다.
+  * **TLS 분할 지연(`delay_ms`) 최적화 & 안전 마이그레이션**: 실측 검증된 `TlsHeader5` + `2 ms` 기본값 적용(기존 `5 ms` 기본 설정 자동 마이그레이션 포함)으로 초기 TLS 핸드셰이크 지연을 단축하고 `TlsRecordFrag` SNI 중간 분할 정확도를 개선했습니다.
+  * **DNS 폴백 및 Happy Eyeballs 응답성 강화**: DNS 캐시 확대(2,048), 타임아웃 단축(1초), 듀얼스택 경합 간격 단축(100 ms)을 적용했습니다.
 * **초저전력 · 초경량 리소스 최적화 (3.2.0)**:
   * **On-Demand WebView2 생명주기**: `--startup` 시작 또는 창 닫기(`X`)로 트레이에 상주시킬 때 WebView2 프로세스를 완전히 해제하여 **백그라운드 메모리 ~5~8 MB, CPU 0%**를 유지합니다.
   * **최소화 절전 및 GPU 합성 애니메이션**: 창이 열려 있을 때는 GPU 합성 전용 `opacity`/`transform` 펄스를 사용하여 CPU 리페인트를 제거하고, 최소화(`-`) 시 애니메이션 정지 및 WebView2 `MemoryUsageTargetLevel(LOW)`를 적용합니다.
@@ -26,7 +31,7 @@ Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI �
 ## 🚀 다운로드 및 설치
 
 ### 1. 원클릭 설치 프로그램 (권장)
-루트 폴더의 **`FreeView Setup 3.2.0.exe`**를 실행하면 1초 만에 설치가 완료됩니다:
+루트 폴더의 **`FreeView Setup 3.2.2.exe`**를 실행하면 1초 만에 설치가 완료됩니다:
 * 설치 경로: `%LOCALAPPDATA%\Programs\FreeView` (관리자 권한 UAC 창 없이 설치)
 * 바탕화면 및 시작 메뉴 바로가기 자동 생성
 * 제어판 "앱 및 기능" 등록
@@ -46,6 +51,10 @@ Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI �
 * **비상 설정 복구 모드**:
   ```powershell
   .\freeview.exe --restore
+  ```
+* **성능 비교 벤치마크 (`cloudflare-speed-cli` 10회 교차 측정)**:
+  ```powershell
+  .\benchmark_interleaved.bat
   ```
 
 ---

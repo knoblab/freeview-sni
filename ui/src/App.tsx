@@ -15,7 +15,7 @@ export default function App() {
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
-  const [version, setVersion] = useState('3.2.0');
+  const [version, setVersion] = useState('3.2.2');
   const [isPageVisible, setIsPageVisible] = useState<boolean>(() => !document.hidden);
 
   const logsContainerRef = useRef<HTMLDivElement>(null);

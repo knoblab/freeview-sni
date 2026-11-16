@@ -906,7 +906,7 @@ fn register_uninstaller(target_exe: &Path, target_uninst: &Path, target_ico: &Pa
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     if let Ok((key, _)) = hkcu.create_subkey(UNINSTALL_KEY_PATH) {
         let _ = key.set_value("DisplayName", &"FreeView 3.2");
-        let _ = key.set_value("DisplayVersion", &"3.2.0");
+        let _ = key.set_value("DisplayVersion", &"3.2.2");
         let _ = key.set_value("Publisher", &"QuarterPi & knoblab");
         let _ = key.set_value("DisplayIcon", &target_ico.to_string_lossy().as_ref());
         let uninst_cmd = format!("\"{}\" --uninstall", target_uninst.to_string_lossy());

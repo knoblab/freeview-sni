@@ -54,9 +54,10 @@ impl DnsResolver {
         ));
 
         let mut opts = ResolverOpts::default();
-        opts.timeout = std::time::Duration::from_secs(3);
-        opts.attempts = 2;
-        opts.cache_size = 256;
+        opts.timeout = std::time::Duration::from_secs(1);
+        opts.attempts = 1;
+        opts.num_concurrent_reqs = 2;
+        opts.cache_size = 2048;
         opts.ip_strategy = LookupIpStrategy::Ipv4thenIpv6;
 
         let resolver = TokioAsyncResolver::tokio(config, opts);

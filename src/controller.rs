@@ -41,9 +41,13 @@ impl Controller {
     pub fn new(config: AppConfig) -> Self {
         set_debug_logs(config.debug_logs);
 
+        let worker_threads = std::thread::available_parallelism()
+            .map(|n| n.get().clamp(4, 8))
+            .unwrap_or(4);
+
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .worker_threads(2)
+            .worker_threads(worker_threads)
             .build()
             .expect("Tokio runtime creation failed");
 
