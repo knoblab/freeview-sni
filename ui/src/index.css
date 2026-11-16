@@ -1,4 +1,4 @@
-/* FreeView 3.3.0 — Figma Concept Design (1.2x Scale) */
+/* FreeView 3.3.1 — Figma Concept Design (1.2x Scale, Anti-Aliased & Crisp Text) */
 
 :root {
   --fv-bg: #f7f6f2;
@@ -35,7 +35,16 @@ body,
   overflow: hidden;
   font-family: var(--fv-font-sans);
   font-weight: 400;
-  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+  -webkit-font-smoothing: subpixel-antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
 }
 
 button {
@@ -51,7 +60,7 @@ button {
   position: relative;
   width: 350px;
   height: 205px;
-  border-radius: 19.2px;
+  border-radius: 19px;
   background-color: var(--fv-bg);
   border: 1px solid rgba(0, 0, 0, 0.08);
   overflow: hidden;
@@ -64,7 +73,7 @@ button {
   top: 0;
   left: 0;
   width: 100%;
-  height: 28.8px;
+  height: 29px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -72,22 +81,22 @@ button {
 }
 
 .fv-title {
-  font-size: 14.4px;
+  font-size: 14px;
   line-height: normal;
   font-weight: 400;
   color: var(--fv-title-text);
   text-align: center;
-  padding-top: 1.5px;
+  padding-top: 1px;
   pointer-events: none;
 }
 
 .fv-toggle-btn {
   position: absolute;
-  left: 10.8px;
-  top: 31.2px;
-  width: 328.4px;
-  height: 74.4px;
-  border-radius: 8.4px;
+  left: 11px;
+  top: 31px;
+  width: 328px;
+  height: 74px;
+  border-radius: 8px;
   background-color: var(--fv-off-bg);
   color: var(--fv-toggle-text);
   font-size: 24px;
@@ -126,11 +135,11 @@ button {
 
 .fv-secondary-btn {
   position: absolute;
-  height: 37.2px;
-  border-radius: 8.4px;
+  height: 37px;
+  border-radius: 8px;
   background-color: var(--fv-btn-bg);
   color: var(--fv-btn-text);
-  font-size: 14.4px;
+  font-size: 14px;
   line-height: normal;
   display: flex;
   align-items: center;
@@ -152,19 +161,19 @@ button {
 }
 
 .fv-log-btn {
-  left: 10.8px;
-  top: 112.8px;
-  width: 328.4px;
+  left: 11px;
+  top: 113px;
+  width: 328px;
 }
 
 .fv-github-btn {
-  left: 10.8px;
-  top: 157.2px;
-  width: 160.8px;
+  left: 11px;
+  top: 157px;
+  width: 161px;
 }
 
 .fv-update-btn {
-  left: 177.6px;
-  top: 157.2px;
-  width: 161.6px;
+  left: 178px;
+  top: 157px;
+  width: 161px;
 }

@@ -10,33 +10,44 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use winreg::enums::{HKEY_CURRENT_USER, KEY_WRITE};
 use winreg::RegKey;
 
-use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
-    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW,
-    CreateRoundRectRgn, CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint,
-    EnumFontFamiliesExW, FillRect, InvalidateRect, ScreenToClient, SelectObject, SetBkMode,
-    SetTextColor, SetWindowRgn, HBITMAP, HDC, HFONT, LOGFONTW, PAINTSTRUCT, SRCCOPY,
+    BeginPaint, CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush, DeleteDC,
+    DeleteObject, DrawTextW, EndPaint, EnumFontFamiliesExW, GdiFlush, GetDC, GetDeviceCaps,
+    ReleaseDC, ScreenToClient, SelectObject, SetBkMode, SetTextColor, AC_SRC_ALPHA, AC_SRC_OVER,
+    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, HBITMAP, HDC, HFONT,
+    LOGFONTW, PAINTSTRUCT,
 };
-use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows_sys::Win32::UI::Shell::{
     SHBrowseForFolderW, SHGetFolderPathW, SHGetPathFromIDListW, ShellExecuteW, BROWSEINFOW,
     CSIDL_DESKTOPDIRECTORY, CSIDL_PROGRAMS,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetCursorPos,
-    GetMessageW, GetSystemMetrics, LoadCursorW, MessageBoxW, PostMessageW, PostQuitMessage,
-    RegisterClassExW, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HTCAPTION, HTCLIENT,
-    IDC_ARROW, IDC_HAND, MB_ICONINFORMATION, MB_OK, MSG, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW,
-    WM_APP, WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WNDCLASSEXW, WS_POPUP, WS_SYSMENU,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
+    GetSystemMetrics, GetWindowRect, LoadCursorW, MessageBoxW, PostMessageW, PostQuitMessage,
+    RegisterClassExW, SetWindowPos, ShowWindow, TranslateMessage, UpdateLayeredWindow, CS_HREDRAW,
+    CS_VREDRAW, HTCAPTION, HTCLIENT, IDC_ARROW, IDC_HAND, MB_ICONINFORMATION, MB_OK, MSG,
+    SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOW, ULW_ALPHA, WM_APP, WM_CLOSE,
+    WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_NCHITTEST, WM_PAINT, WNDCLASSEXW, WS_EX_LAYERED, WS_POPUP, WS_SYSMENU,
 };
 
 #[link(name = "gdiplus")]
 extern "system" {
     fn GdiplusStartup(token: *mut usize, input: *const GdiplusStartupInput, output: *mut c_void) -> i32;
     fn GdiplusShutdown(token: usize);
-    fn GdipCreateFromHDC(hdc: HDC, graphics: *mut *mut c_void) -> i32;
+    fn GdipCreateBitmapFromScan0(
+        width: i32,
+        height: i32,
+        stride: i32,
+        format: i32,
+        scan0: *mut u8,
+        bitmap: *mut *mut c_void,
+    ) -> i32;
+    fn GdipGetImageGraphicsContext(image: *mut c_void, graphics: *mut *mut c_void) -> i32;
+    fn GdipDisposeImage(image: *mut c_void) -> i32;
     fn GdipDeleteGraphics(graphics: *mut c_void) -> i32;
     fn GdipSetSmoothingMode(graphics: *mut c_void, mode: i32) -> i32;
     fn GdipCreatePath(fill_mode: i32, path: *mut *mut c_void) -> i32;
@@ -101,11 +112,14 @@ struct TrackMouseEventData {
     dw_hover_time: u32,
 }
 
-const WIN_W: i32 = 350;
-const WIN_H: i32 = 205;
-const TOPBAR_H: i32 = 29;
-const RADIUS_CARD: f32 = 19.2;
+const CARD_W: f32 = 350.0;
+const CARD_H: f32 = 205.0;
+const WIN_BLEED: f32 = 2.0;
+const TOPBAR_H: f32 = 29.0;
+const RADIUS_CARD: f32 = 19.0;
 const RADIUS_BTN: f32 = 8.4;
+const PIXEL_FORMAT_32BPP_PARGB: i32 = 0x000E_200B;
+const WM_DPICHANGED: u32 = 0x02E0;
 
 // Step 1 (Install 1) rects — 1.2x Figma layout
 const R_S1_GITHUB: RectF = RectF::new(10.8, 32.4, 328.4, 37.2);
@@ -259,6 +273,8 @@ struct WizardState {
 }
 
 struct WizardFonts {
+    dpi: u32,
+    family: String,
     font_14: HFONT,
     font_24: HFONT,
 }
@@ -270,12 +286,96 @@ static PROGRESS_VAL: AtomicU32 = AtomicU32::new(0);
 static INSTALL_ERR: UiThreadCell<String> = UiThreadCell::new();
 
 fn main() {
+    enable_dpi_awareness();
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--uninstall") {
         do_uninstall_gui();
     } else {
         run_install_wizard();
     }
+}
+
+fn enable_dpi_awareness() {
+    unsafe {
+        let user32_name = to_wide_null("user32.dll");
+        let h_user32 = GetModuleHandleW(user32_name.as_ptr());
+        if !h_user32.is_null() {
+            let proc = GetProcAddress(h_user32, b"SetProcessDpiAwarenessContext\0".as_ptr());
+            if let Some(f) = proc {
+                type FnSetDpiCtx = unsafe extern "system" fn(isize) -> BOOL;
+                let set_ctx: FnSetDpiCtx = std::mem::transmute(f);
+                // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+                if set_ctx(-4) != 0 {
+                    return;
+                }
+                // Fallback: DPI_AWARENESS_CONTEXT_SYSTEM_AWARE = -2
+                if set_ctx(-2) != 0 {
+                    return;
+                }
+            }
+            let proc_legacy = GetProcAddress(h_user32, b"SetProcessDPIAware\0".as_ptr());
+            if let Some(f) = proc_legacy {
+                type FnLegacy = unsafe extern "system" fn() -> BOOL;
+                let set_legacy: FnLegacy = std::mem::transmute(f);
+                let _ = set_legacy();
+            }
+        }
+    }
+}
+
+unsafe fn get_window_dpi(hwnd: HWND) -> u32 {
+    let user32_name = to_wide_null("user32.dll");
+    let h_user32 = GetModuleHandleW(user32_name.as_ptr());
+    if !h_user32.is_null() && !hwnd.is_null() {
+        if let Some(f) = GetProcAddress(h_user32, b"GetDpiForWindow\0".as_ptr()) {
+            type FnGetDpi = unsafe extern "system" fn(HWND) -> u32;
+            let get_dpi: FnGetDpi = std::mem::transmute(f);
+            let dpi = get_dpi(hwnd);
+            if dpi > 0 {
+                return dpi;
+            }
+        }
+    }
+    let hdc = GetDC(hwnd);
+    let dpi = GetDeviceCaps(hdc, 88) as u32; // LOGPIXELSX
+    ReleaseDC(hwnd, hdc);
+    if dpi > 0 { dpi } else { 96 }
+}
+
+fn scale_rect(r: RectF, s: f32) -> RectF {
+    RectF::new((r.x + WIN_BLEED) * s, (r.y + WIN_BLEED) * s, r.w * s, r.h * s)
+}
+
+fn phys_win_size(dpi: u32) -> (i32, i32) {
+    let s = dpi as f32 / 96.0;
+    (
+        ((CARD_W + WIN_BLEED * 2.0) * s).ceil() as i32,
+        ((CARD_H + WIN_BLEED * 2.0) * s).ceil() as i32,
+    )
+}
+
+unsafe fn rebuild_fonts_for_dpi(dpi: u32) {
+    let s = dpi as f32 / 96.0;
+    let family = if let Some(prev) = FONTS.take() {
+        DeleteObject(prev.font_14);
+        DeleteObject(prev.font_24);
+        prev.family
+    } else {
+        let hdc = GetDC(std::ptr::null_mut());
+        let name = if is_font_installed(hdc, "IBM Plex Sans KR") {
+            "IBM Plex Sans KR"
+        } else {
+            "Malgun Gothic"
+        };
+        ReleaseDC(std::ptr::null_mut(), hdc);
+        name.to_string()
+    };
+    FONTS.set(WizardFonts {
+        dpi,
+        font_14: create_font((14.0 * s).round() as i32, 400, &family),
+        font_24: create_font((24.0 * s).round() as i32, 400, &family),
+        family,
+    });
 }
 
 unsafe extern "system" fn font_enum_proc(
@@ -319,7 +419,7 @@ fn run_install_wizard() {
 
         let h_instance = GetModuleHandleW(std::ptr::null());
         let class_name = to_wide_null("FreeViewFigmaInstaller");
-        let title = to_wide_null("FreeView 3.3.0");
+        let title = to_wide_null("FreeView 3.3.1");
         let brush_bg = CreateSolidBrush(CREF_BG);
 
         let wnd_class = WNDCLASSEXW {
@@ -338,8 +438,10 @@ fn run_install_wizard() {
         };
         RegisterClassExW(&wnd_class);
 
-        let pos_x = ((GetSystemMetrics(SM_CXSCREEN) - WIN_W) / 2).max(0);
-        let pos_y = ((GetSystemMetrics(SM_CYSCREEN) - WIN_H) / 2).max(0);
+        let initial_dpi = get_window_dpi(std::ptr::null_mut());
+        let (init_w, init_h) = phys_win_size(initial_dpi);
+        let pos_x = ((GetSystemMetrics(SM_CXSCREEN) - init_w) / 2).max(0);
+        let pos_y = ((GetSystemMetrics(SM_CYSCREEN) - init_h) / 2).max(0);
 
         STATE.set(WizardState {
             step: WizardStep::Welcome,
@@ -354,36 +456,30 @@ fn run_install_wizard() {
         });
 
         let hwnd = CreateWindowExW(
-            0,
+            WS_EX_LAYERED,
             class_name.as_ptr(),
             title.as_ptr(),
             WS_POPUP | WS_SYSMENU,
             pos_x,
             pos_y,
-            WIN_W,
-            WIN_H,
+            init_w,
+            init_h,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             h_instance,
             std::ptr::null(),
         );
 
-        let hdc = windows_sys::Win32::Graphics::Gdi::GetDC(hwnd);
-        let font_family = if is_font_installed(hdc, "IBM Plex Sans KR") {
-            "IBM Plex Sans KR"
-        } else {
-            "Malgun Gothic"
-        };
-        windows_sys::Win32::Graphics::Gdi::ReleaseDC(hwnd, hdc);
+        let win_dpi = get_window_dpi(hwnd);
+        let (phys_w, phys_h) = phys_win_size(win_dpi);
+        if phys_w != init_w || phys_h != init_h {
+            let cx = ((GetSystemMetrics(SM_CXSCREEN) - phys_w) / 2).max(0);
+            let cy = ((GetSystemMetrics(SM_CYSCREEN) - phys_h) / 2).max(0);
+            SetWindowPos(hwnd, std::ptr::null_mut(), cx, cy, phys_w, phys_h, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
 
-        FONTS.set(WizardFonts {
-            font_14: create_font(14, 400, font_family),
-            font_24: create_font(24, 400, font_family),
-        });
-
-        let rgn = CreateRoundRectRgn(0, 0, WIN_W + 1, WIN_H + 1, 38, 38);
-        SetWindowRgn(hwnd, rgn, 1);
-
+        rebuild_fonts_for_dpi(win_dpi);
+        render_layered(hwnd);
         ShowWindow(hwnd, SW_SHOW);
 
         let mut msg: MSG = std::mem::zeroed();
@@ -415,7 +511,7 @@ unsafe fn create_font(size: i32, weight: i32, name: &str) -> HFONT {
         0,
         0,
         1,
-        0,
+        4, // OUT_TT_PRECIS
         0,
         5, // CLEARTYPE_QUALITY
         0,
@@ -495,32 +591,32 @@ unsafe fn stroke_round_rect(g: *mut c_void, r: RectF, radius: f32, argb: u32, wi
     GdipDeletePath(path);
 }
 
-unsafe fn draw_folder_icon(g: *mut c_void, btn_rect: RectF) {
-    // 4:20 inside 6:51 svg icon centered in 37.2x37.2 square (1.2x scale)
+unsafe fn draw_folder_icon(g: *mut c_void, btn_rect: RectF, s: f32) {
+    // 4:20 inside 6:51 svg icon centered in 37.2x37.2 square (1.2x * DPI scale)
     let cx = btn_rect.x + btn_rect.w * 0.5;
     let cy = btn_rect.y + btn_rect.h * 0.5;
     let mut pen: *mut c_void = std::ptr::null_mut();
-    GdipCreatePen1(0xFFF7_F6F2, 1.8, 2, &mut pen);
+    GdipCreatePen1(0xFFF7_F6F2, 1.8 * s, 2, &mut pen);
     GdipSetPenStartCap(pen, 2);
     GdipSetPenEndCap(pen, 2);
     GdipSetPenLineJoin(pen, 2);
 
     let pts = [
-        GpPointF { x: cx - 8.0, y: cy - 6.0 },
-        GpPointF { x: cx - 2.4, y: cy - 6.0 },
-        GpPointF { x: cx - 0.4, y: cy - 3.6 },
-        GpPointF { x: cx + 8.0, y: cy - 3.6 },
-        GpPointF { x: cx + 8.0, y: cy + 6.0 },
-        GpPointF { x: cx - 8.0, y: cy + 6.0 },
-        GpPointF { x: cx - 8.0, y: cy - 6.0 },
+        GpPointF { x: cx - 8.0 * s, y: cy - 6.0 * s },
+        GpPointF { x: cx - 2.4 * s, y: cy - 6.0 * s },
+        GpPointF { x: cx - 0.4 * s, y: cy - 3.6 * s },
+        GpPointF { x: cx + 8.0 * s, y: cy - 3.6 * s },
+        GpPointF { x: cx + 8.0 * s, y: cy + 6.0 * s },
+        GpPointF { x: cx - 8.0 * s, y: cy + 6.0 * s },
+        GpPointF { x: cx - 8.0 * s, y: cy - 6.0 * s },
     ];
     GdipDrawLines(g, pen, pts.as_ptr(), pts.len() as i32);
     GdipDeletePen(pen);
 }
 
-unsafe fn draw_checkmark(g: *mut c_void, box_rect: RectF) {
+unsafe fn draw_checkmark(g: *mut c_void, box_rect: RectF, s: f32) {
     let mut pen: *mut c_void = std::ptr::null_mut();
-    GdipCreatePen1(0xFFF7_F6F2, 1.8, 2, &mut pen);
+    GdipCreatePen1(0xFFF7_F6F2, 1.8 * s, 2, &mut pen);
     GdipSetPenStartCap(pen, 2);
     GdipSetPenEndCap(pen, 2);
     GdipSetPenLineJoin(pen, 2);
@@ -543,12 +639,40 @@ unsafe fn draw_checkmark(g: *mut c_void, box_rect: RectF) {
     GdipDeletePen(pen);
 }
 
-unsafe fn draw_gdi_text(hdc: HDC, font: HFONT, color: u32, r: RectF, text: &str, flags: u32) {
-    SelectObject(hdc, font as _);
-    SetTextColor(hdc, color);
-    let mut rc = r.to_rect();
-    let wide = to_wide_null(text);
-    DrawTextW(hdc, wide.as_ptr(), -1, &mut rc, flags | DT_NOPREFIX);
+struct PendingText<'a> {
+    font: HFONT,
+    color: u32,
+    rect: RectF,
+    text: &'a str,
+    flags: u32,
+}
+
+unsafe fn draw_gdi_text_with_alpha(
+    hdc: HDC,
+    bits: *mut u32,
+    w: i32,
+    h: i32,
+    item: &PendingText<'_>,
+) {
+    SelectObject(hdc, item.font as _);
+    SetTextColor(hdc, item.color);
+    let mut rc = item.rect.to_rect();
+    let wide = to_wide_null(item.text);
+    DrawTextW(hdc, wide.as_ptr(), -1, &mut rc, item.flags | DT_NOPREFIX);
+    GdiFlush();
+
+    // ClearType GDI DrawTextW zeroes the alpha byte of touched pixels on a 32bpp DIB.
+    // Restore 0xFF alpha across the strictly interior opaque text box.
+    let x0 = rc.left.max(0);
+    let x1 = rc.right.min(w);
+    let y0 = rc.top.max(0);
+    let y1 = rc.bottom.min(h);
+    for y in y0..y1 {
+        let row = bits.add((y * w) as usize);
+        for x in x0..x1 {
+            *row.add(x as usize) |= 0xFF00_0000;
+        }
+    }
 }
 
 fn pick_btn_bg(state: &WizardState, id: HitId, base: u32, hover: u32, down: u32) -> u32 {
@@ -561,166 +685,330 @@ fn pick_btn_bg(state: &WizardState, id: HitId, base: u32, hover: u32, down: u32)
     }
 }
 
-unsafe fn paint_wizard(hwnd: HWND, hdc_dst: HDC) {
-    let mut rc_client: RECT = std::mem::zeroed();
-    GetClientRect(hwnd, &mut rc_client);
-    let w = rc_client.right - rc_client.left;
-    let h = rc_client.bottom - rc_client.top;
-
-    let mem_dc = CreateCompatibleDC(hdc_dst);
-    let mem_bmp: HBITMAP = CreateCompatibleBitmap(hdc_dst, w, h);
-    let old_bmp = SelectObject(mem_dc, mem_bmp as _);
-
-    let bg_brush = CreateSolidBrush(CREF_BG);
-    FillRect(mem_dc, &rc_client, bg_brush);
-    DeleteObject(bg_brush);
-
-    let mut g: *mut c_void = std::ptr::null_mut();
-    GdipCreateFromHDC(mem_dc, &mut g);
-    GdipSetSmoothingMode(g, 4); // SmoothingModeAntiAlias
-
-    // Outer 19.2px card border
-    fill_round_rect(g, RectF::new(0.0, 0.0, WIN_W as f32, WIN_H as f32), RADIUS_CARD, ARGB_BG);
-    stroke_round_rect(
-        g,
-        RectF::new(0.5, 0.5, (WIN_W - 1) as f32, (WIN_H - 1) as f32),
-        RADIUS_CARD - 0.5,
-        ARGB_CARD_BORDER,
-        1.0,
-    );
-
-    SetBkMode(mem_dc, 1);
-
+unsafe fn render_layered(hwnd: HWND) {
     let Some(state) = STATE.as_ref() else {
-        GdipDeleteGraphics(g);
-        BitBlt(hdc_dst, 0, 0, w, h, mem_dc, 0, 0, SRCCOPY);
-        SelectObject(mem_dc, old_bmp);
-        DeleteObject(mem_bmp as _);
-        DeleteDC(mem_dc);
         return;
     };
-
     let Some(fonts) = FONTS.as_ref() else {
-        GdipDeleteGraphics(g);
-        BitBlt(hdc_dst, 0, 0, w, h, mem_dc, 0, 0, SRCCOPY);
-        SelectObject(mem_dc, old_bmp);
-        DeleteObject(mem_bmp as _);
-        DeleteDC(mem_dc);
         return;
     };
 
-    // Top bar title: "FreeView 3.3.0"
-    draw_gdi_text(
+    let s = fonts.dpi as f32 / 96.0;
+    let (w, h) = phys_win_size(fonts.dpi);
+
+    let hdc_screen = GetDC(std::ptr::null_mut());
+    let mem_dc = CreateCompatibleDC(hdc_screen);
+    let mut bmi: BITMAPINFO = std::mem::zeroed();
+    bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+    bmi.bmiHeader.biWidth = w;
+    bmi.bmiHeader.biHeight = -h; // Top-down DIB
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    let mut bits_raw: *mut c_void = std::ptr::null_mut();
+    let mem_bmp: HBITMAP = CreateDIBSection(
+        hdc_screen,
+        &bmi,
+        DIB_RGB_COLORS,
+        &mut bits_raw,
+        std::ptr::null_mut(),
+        0,
+    );
+    if mem_bmp.is_null() || bits_raw.is_null() {
+        DeleteDC(mem_dc);
+        ReleaseDC(std::ptr::null_mut(), hdc_screen);
+        return;
+    }
+
+    std::ptr::write_bytes(bits_raw, 0, (w * h) as usize * 4);
+
+    // Stage 1: Draw anti-aliased rounded card & controls directly into 32bpp PARGB DIB bytes.
+    let mut gp_bmp: *mut c_void = std::ptr::null_mut();
+    let mut g: *mut c_void = std::ptr::null_mut();
+    if GdipCreateBitmapFromScan0(w, h, w * 4, PIXEL_FORMAT_32BPP_PARGB, bits_raw as *mut u8, &mut gp_bmp) == 0
+        && GdipGetImageGraphicsContext(gp_bmp, &mut g) == 0
+    {
+        GdipSetSmoothingMode(g, 4); // SmoothingModeAntiAlias
+
+        let card = scale_rect(RectF::new(0.0, 0.0, CARD_W, CARD_H), s);
+        fill_round_rect(g, card, RADIUS_CARD * s, ARGB_BG);
+        stroke_round_rect(
+            g,
+            RectF::new(
+                card.x + 0.5 * s,
+                card.y + 0.5 * s,
+                card.w - 1.0 * s,
+                card.h - 1.0 * s,
+            ),
+            (RADIUS_CARD - 0.5) * s,
+            ARGB_CARD_BORDER,
+            1.0 * s,
+        );
+
+        let btn_r = RADIUS_BTN * s;
+        match state.step {
+            WizardStep::Welcome => {
+                let bg_gh = pick_btn_bg(state, HitId::Github, ARGB_BTN_SEC, ARGB_BTN_SEC_HOVER, ARGB_BTN_SEC_DOWN);
+                fill_round_rect(g, scale_rect(R_S1_GITHUB, s), btn_r, bg_gh);
+
+                let bg_dir = pick_btn_bg(state, HitId::BrowseFolder, ARGB_FOLDER_BG, ARGB_FOLDER_HOVER, ARGB_FOLDER_DOWN);
+                let r_dir = scale_rect(R_S1_FOLDER, s);
+                fill_round_rect(g, r_dir, btn_r, bg_dir);
+                draw_folder_icon(g, r_dir, s);
+
+                let bg_path = pick_btn_bg(state, HitId::PathBox, ARGB_BTN_SEC, ARGB_BTN_SEC_HOVER, ARGB_BTN_SEC_DOWN);
+                fill_round_rect(g, scale_rect(R_S1_PATH, s), btn_r, bg_path);
+
+                let bg_inst = pick_btn_bg(state, HitId::InstallStep1, ARGB_TEAL, ARGB_TEAL_HOVER, ARGB_TEAL_DOWN);
+                fill_round_rect(g, scale_rect(R_S1_INSTALL, s), btn_r, bg_inst);
+            }
+            WizardStep::Options => {
+                let bg_auto = pick_btn_bg(state, HitId::OptAutostart, ARGB_BTN_SEC, ARGB_BTN_SEC_HOVER, ARGB_BTN_SEC_DOWN);
+                fill_round_rect(g, scale_rect(R_S2_AUTO, s), btn_r, bg_auto);
+                let cb_auto = scale_rect(R_S2_AUTO_CB, s);
+                fill_round_rect(g, cb_auto, 2.4 * s, if state.opt_autostart { ARGB_TEAL } else { ARGB_CHECK_OFF });
+                if state.opt_autostart {
+                    draw_checkmark(g, cb_auto, s);
+                }
+
+                let bg_short = pick_btn_bg(state, HitId::OptShortcuts, ARGB_BTN_SEC, ARGB_BTN_SEC_HOVER, ARGB_BTN_SEC_DOWN);
+                fill_round_rect(g, scale_rect(R_S2_SHORT, s), btn_r, bg_short);
+                let cb_short = scale_rect(R_S2_SHORT_CB, s);
+                fill_round_rect(g, cb_short, 2.4 * s, if state.opt_shortcuts { ARGB_TEAL } else { ARGB_CHECK_OFF });
+                if state.opt_shortcuts {
+                    draw_checkmark(g, cb_short, s);
+                }
+
+                let bg_inst = pick_btn_bg(state, HitId::InstallStep2, ARGB_TEAL, ARGB_TEAL_HOVER, ARGB_TEAL_DOWN);
+                fill_round_rect(g, scale_rect(R_S2_INSTALL, s), btn_r, bg_inst);
+            }
+            WizardStep::Installing => {
+                let track = scale_rect(R_MID_ROW, s);
+                fill_round_rect(g, track, btn_r, ARGB_BTN_SEC);
+                let pct = state.progress.min(100);
+                if pct > 0 {
+                    let fill_w = (track.w * (pct as f32 / 100.0)).max(16.8 * s);
+                    fill_round_rect(g, RectF::new(track.x, track.y, fill_w, track.h), btn_r, ARGB_TEAL);
+                }
+                fill_round_rect(g, scale_rect(R_BOTTOM_BTN, s), btn_r, ARGB_MUTED);
+            }
+            WizardStep::Done => {
+                let bg_close = pick_btn_bg(state, HitId::DoneClose, ARGB_BTN_SEC, ARGB_BTN_SEC_HOVER, ARGB_BTN_SEC_DOWN);
+                fill_round_rect(g, scale_rect(R_MID_ROW, s), btn_r, bg_close);
+
+                let bg_launch = pick_btn_bg(state, HitId::DoneLaunch, ARGB_TEAL, ARGB_TEAL_HOVER, ARGB_TEAL_DOWN);
+                fill_round_rect(g, scale_rect(R_BOTTOM_BTN, s), btn_r, bg_launch);
+            }
+        }
+    }
+    if !g.is_null() {
+        GdipDeleteGraphics(g);
+    }
+    if !gp_bmp.is_null() {
+        GdipDisposeImage(gp_bmp);
+    }
+
+    // Stage 2: Draw ClearType GDI text onto the same DIB with alpha restoration inside text rects.
+    let old_bmp = SelectObject(mem_dc, mem_bmp as _);
+    SetBkMode(mem_dc, 1);
+    let bits_u32 = bits_raw as *mut u32;
+
+    let topbar_text_rect = scale_rect(RectF::new(40.0, 1.5, CARD_W - 80.0, TOPBAR_H - 1.5), s);
+    draw_gdi_text_with_alpha(
         mem_dc,
-        fonts.font_14,
-        CREF_TITLE,
-        RectF::new(0.0, 1.5, WIN_W as f32, TOPBAR_H as f32),
-        "FreeView 3.3.0",
-        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        bits_u32,
+        w,
+        h,
+        &PendingText {
+            font: fonts.font_14,
+            color: CREF_TITLE,
+            rect: topbar_text_rect,
+            text: "FreeView 3.3.1",
+            flags: DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        },
     );
 
     match state.step {
         WizardStep::Welcome => {
-            // 1. "깃허브" button
-            let bg_gh = pick_btn_bg(state, HitId::Github, ARGB_BTN_SEC, ARGB_BTN_SEC_HOVER, ARGB_BTN_SEC_DOWN);
-            fill_round_rect(g, R_S1_GITHUB, RADIUS_BTN, bg_gh);
-            draw_gdi_text(mem_dc, fonts.font_14, CREF_SEC_TEXT, R_S1_GITHUB, "깃허브", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-            // 2. Folder picker button
-            let bg_dir = pick_btn_bg(state, HitId::BrowseFolder, ARGB_FOLDER_BG, ARGB_FOLDER_HOVER, ARGB_FOLDER_DOWN);
-            fill_round_rect(g, R_S1_FOLDER, RADIUS_BTN, bg_dir);
-            draw_folder_icon(g, R_S1_FOLDER);
-
-            // 3. Path box
-            let bg_path = pick_btn_bg(state, HitId::PathBox, ARGB_BTN_SEC, ARGB_BTN_SEC_HOVER, ARGB_BTN_SEC_DOWN);
-            fill_round_rect(g, R_S1_PATH, RADIUS_BTN, bg_path);
+            draw_gdi_text_with_alpha(
+                mem_dc,
+                bits_u32,
+                w,
+                h,
+                &PendingText {
+                    font: fonts.font_14,
+                    color: CREF_SEC_TEXT,
+                    rect: scale_rect(R_S1_GITHUB, s),
+                    text: "깃허브",
+                    flags: DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                },
+            );
             let path_text = state.install_dir.to_string_lossy();
-            draw_gdi_text(
-                mem_dc,
-                fonts.font_14,
-                CREF_SEC_TEXT,
+            let r_path_text = scale_rect(
                 RectF::new(R_S1_PATH.x + 12.0, R_S1_PATH.y, R_S1_PATH.w - 24.0, R_S1_PATH.h),
-                &path_text,
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_PATH_ELLIPSIS,
+                s,
             );
-
-            // 4. Primary "설치" button
-            let bg_inst = pick_btn_bg(state, HitId::InstallStep1, ARGB_TEAL, ARGB_TEAL_HOVER, ARGB_TEAL_DOWN);
-            fill_round_rect(g, R_S1_INSTALL, RADIUS_BTN, bg_inst);
-            draw_gdi_text(mem_dc, fonts.font_24, CREF_LIGHT_TEXT, R_S1_INSTALL, "설치", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        }
-
-        WizardStep::Options => {
-            // 1. "시작 시 자동 실행"
-            let bg_auto = pick_btn_bg(state, HitId::OptAutostart, ARGB_BTN_SEC, ARGB_BTN_SEC_HOVER, ARGB_BTN_SEC_DOWN);
-            fill_round_rect(g, R_S2_AUTO, RADIUS_BTN, bg_auto);
-            fill_round_rect(g, R_S2_AUTO_CB, 2.4, if state.opt_autostart { ARGB_TEAL } else { ARGB_CHECK_OFF });
-            if state.opt_autostart {
-                draw_checkmark(g, R_S2_AUTO_CB);
-            }
-            draw_gdi_text(mem_dc, fonts.font_14, CREF_SEC_TEXT, R_S2_AUTO, "시작 시 자동 실행", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-            // 2. "바로가기 만들기"
-            let bg_short = pick_btn_bg(state, HitId::OptShortcuts, ARGB_BTN_SEC, ARGB_BTN_SEC_HOVER, ARGB_BTN_SEC_DOWN);
-            fill_round_rect(g, R_S2_SHORT, RADIUS_BTN, bg_short);
-            fill_round_rect(g, R_S2_SHORT_CB, 2.4, if state.opt_shortcuts { ARGB_TEAL } else { ARGB_CHECK_OFF });
-            if state.opt_shortcuts {
-                draw_checkmark(g, R_S2_SHORT_CB);
-            }
-            draw_gdi_text(mem_dc, fonts.font_14, CREF_SEC_TEXT, R_S2_SHORT, "바로가기 만들기", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-            // 3. Primary "설치" button
-            let bg_inst = pick_btn_bg(state, HitId::InstallStep2, ARGB_TEAL, ARGB_TEAL_HOVER, ARGB_TEAL_DOWN);
-            fill_round_rect(g, R_S2_INSTALL, RADIUS_BTN, bg_inst);
-            draw_gdi_text(mem_dc, fonts.font_24, CREF_LIGHT_TEXT, R_S2_INSTALL, "설치", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        }
-
-        WizardStep::Installing => {
-            // Progress track & fill
-            fill_round_rect(g, R_MID_ROW, RADIUS_BTN, ARGB_BTN_SEC);
-            let pct = state.progress.min(100);
-            if pct > 0 {
-                let fill_w = (R_MID_ROW.w * (pct as f32 / 100.0)).max(16.8);
-                fill_round_rect(g, RectF::new(R_MID_ROW.x, R_MID_ROW.y, fill_w, R_MID_ROW.h), RADIUS_BTN, ARGB_TEAL);
-            }
-
-            // Disabled "설치중..." button
-            fill_round_rect(g, R_BOTTOM_BTN, RADIUS_BTN, ARGB_MUTED);
-            draw_gdi_text(mem_dc, fonts.font_24, CREF_LIGHT_TEXT, R_BOTTOM_BTN, "설치중...", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        }
-
-        WizardStep::Done => {
-            let status_text = state
-                .error_msg
-                .as_deref()
-                .unwrap_or("설치 완료!");
-            draw_gdi_text(
+            draw_gdi_text_with_alpha(
                 mem_dc,
-                fonts.font_14,
-                CREF_SEC_TEXT,
-                R_DONE_STATUS,
-                status_text,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_PATH_ELLIPSIS,
+                bits_u32,
+                w,
+                h,
+                &PendingText {
+                    font: fonts.font_14,
+                    color: CREF_SEC_TEXT,
+                    rect: r_path_text,
+                    text: &path_text,
+                    flags: DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_PATH_ELLIPSIS,
+                },
             );
-
-            // "닫기" button
-            let bg_close = pick_btn_bg(state, HitId::DoneClose, ARGB_BTN_SEC, ARGB_BTN_SEC_HOVER, ARGB_BTN_SEC_DOWN);
-            fill_round_rect(g, R_MID_ROW, RADIUS_BTN, bg_close);
-            draw_gdi_text(mem_dc, fonts.font_14, CREF_SEC_TEXT, R_MID_ROW, "닫기", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-            // "실행" (or "다시 시도" if error)
-            let bg_launch = pick_btn_bg(state, HitId::DoneLaunch, ARGB_TEAL, ARGB_TEAL_HOVER, ARGB_TEAL_DOWN);
-            fill_round_rect(g, R_BOTTOM_BTN, RADIUS_BTN, bg_launch);
+            draw_gdi_text_with_alpha(
+                mem_dc,
+                bits_u32,
+                w,
+                h,
+                &PendingText {
+                    font: fonts.font_24,
+                    color: CREF_LIGHT_TEXT,
+                    rect: scale_rect(R_S1_INSTALL, s),
+                    text: "설치",
+                    flags: DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                },
+            );
+        }
+        WizardStep::Options => {
+            draw_gdi_text_with_alpha(
+                mem_dc,
+                bits_u32,
+                w,
+                h,
+                &PendingText {
+                    font: fonts.font_14,
+                    color: CREF_SEC_TEXT,
+                    rect: scale_rect(R_S2_AUTO, s),
+                    text: "시작 시 자동 실행",
+                    flags: DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                },
+            );
+            draw_gdi_text_with_alpha(
+                mem_dc,
+                bits_u32,
+                w,
+                h,
+                &PendingText {
+                    font: fonts.font_14,
+                    color: CREF_SEC_TEXT,
+                    rect: scale_rect(R_S2_SHORT, s),
+                    text: "바로가기 만들기",
+                    flags: DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                },
+            );
+            draw_gdi_text_with_alpha(
+                mem_dc,
+                bits_u32,
+                w,
+                h,
+                &PendingText {
+                    font: fonts.font_24,
+                    color: CREF_LIGHT_TEXT,
+                    rect: scale_rect(R_S2_INSTALL, s),
+                    text: "설치",
+                    flags: DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                },
+            );
+        }
+        WizardStep::Installing => {
+            draw_gdi_text_with_alpha(
+                mem_dc,
+                bits_u32,
+                w,
+                h,
+                &PendingText {
+                    font: fonts.font_24,
+                    color: CREF_LIGHT_TEXT,
+                    rect: scale_rect(R_BOTTOM_BTN, s),
+                    text: "설치중...",
+                    flags: DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                },
+            );
+        }
+        WizardStep::Done => {
+            let status_text = state.error_msg.as_deref().unwrap_or("설치 완료!");
+            draw_gdi_text_with_alpha(
+                mem_dc,
+                bits_u32,
+                w,
+                h,
+                &PendingText {
+                    font: fonts.font_14,
+                    color: CREF_SEC_TEXT,
+                    rect: scale_rect(R_DONE_STATUS, s),
+                    text: status_text,
+                    flags: DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_PATH_ELLIPSIS,
+                },
+            );
+            draw_gdi_text_with_alpha(
+                mem_dc,
+                bits_u32,
+                w,
+                h,
+                &PendingText {
+                    font: fonts.font_14,
+                    color: CREF_SEC_TEXT,
+                    rect: scale_rect(R_MID_ROW, s),
+                    text: "닫기",
+                    flags: DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                },
+            );
             let primary_label = if state.error_msg.is_some() { "다시 시도" } else { "실행" };
-            draw_gdi_text(mem_dc, fonts.font_24, CREF_LIGHT_TEXT, R_BOTTOM_BTN, primary_label, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            draw_gdi_text_with_alpha(
+                mem_dc,
+                bits_u32,
+                w,
+                h,
+                &PendingText {
+                    font: fonts.font_24,
+                    color: CREF_LIGHT_TEXT,
+                    rect: scale_rect(R_BOTTOM_BTN, s),
+                    text: primary_label,
+                    flags: DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                },
+            );
         }
     }
 
-    GdipDeleteGraphics(g);
-    BitBlt(hdc_dst, 0, 0, w, h, mem_dc, 0, 0, SRCCOPY);
+    let mut rc_win: RECT = std::mem::zeroed();
+    GetWindowRect(hwnd, &mut rc_win);
+    let pt_dst = POINT { x: rc_win.left, y: rc_win.top };
+    let size = SIZE { cx: w, cy: h };
+    let pt_src = POINT { x: 0, y: 0 };
+    let blend = BLENDFUNCTION {
+        BlendOp: AC_SRC_OVER as u8,
+        BlendFlags: 0,
+        SourceConstantAlpha: 255,
+        AlphaFormat: AC_SRC_ALPHA as u8,
+    };
+    UpdateLayeredWindow(
+        hwnd,
+        std::ptr::null_mut(),
+        &pt_dst,
+        &size,
+        mem_dc,
+        &pt_src,
+        0,
+        &blend,
+        ULW_ALPHA,
+    );
+
     SelectObject(mem_dc, old_bmp);
     DeleteObject(mem_bmp as _);
     DeleteDC(mem_dc);
+    ReleaseDC(std::ptr::null_mut(), hdc_screen);
+}
+
+unsafe fn phys_to_logical(px: i32, py: i32) -> (f32, f32) {
+    let s = FONTS.as_ref().map(|f| f.dpi as f32 / 96.0).unwrap_or(1.0);
+    ((px as f32) / s - WIN_BLEED, (py as f32) / s - WIN_BLEED)
 }
 
 unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -729,9 +1017,26 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
 
         WM_PAINT => {
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
-            let hdc = BeginPaint(hwnd, &mut ps);
-            paint_wizard(hwnd, hdc);
+            BeginPaint(hwnd, &mut ps);
             EndPaint(hwnd, &ps);
+            0
+        }
+
+        WM_DPICHANGED => {
+            let new_dpi = ((wparam as u32) & 0xFFFF).max(96);
+            rebuild_fonts_for_dpi(new_dpi);
+            let suggested = &*(lparam as *const RECT);
+            let (phys_w, phys_h) = phys_win_size(new_dpi);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                suggested.left,
+                suggested.top,
+                phys_w,
+                phys_h,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+            render_layered(hwnd);
             0
         }
 
@@ -741,7 +1046,8 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
                 y: ((lparam as i32) >> 16) as i16 as i32,
             };
             ScreenToClient(hwnd, &mut pt);
-            if pt.y >= 0 && pt.y < TOPBAR_H {
+            let (_, ly) = phys_to_logical(pt.x, pt.y);
+            if ly >= -WIN_BLEED && ly < TOPBAR_H {
                 HTCAPTION as LRESULT
             } else {
                 HTCLIENT as LRESULT
@@ -749,8 +1055,9 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
         }
 
         WM_MOUSEMOVE => {
-            let x = ((lparam as i32) & 0xFFFF) as i16 as f32;
-            let y = (((lparam as i32) >> 16) & 0xFFFF) as i16 as f32;
+            let px = ((lparam as i32) & 0xFFFF) as i16 as i32;
+            let py = (((lparam as i32) >> 16) & 0xFFFF) as i16 as i32;
+            let (x, y) = phys_to_logical(px, py);
             if let Some(state) = STATE.as_mut() {
                 if !state.tracking_leave {
                     let mut tme = TrackMouseEventData {
@@ -765,7 +1072,7 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
                 let next_hover = hit_test_control(state, x, y);
                 if next_hover != state.hover {
                     state.hover = next_hover;
-                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                    render_layered(hwnd);
                 }
                 let cursor_id = if next_hover != HitId::None { IDC_HAND } else { IDC_ARROW };
                 windows_sys::Win32::UI::WindowsAndMessaging::SetCursor(LoadCursorW(std::ptr::null_mut(), cursor_id));
@@ -778,29 +1085,31 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
                 state.tracking_leave = false;
                 if state.hover != HitId::None {
                     state.hover = HitId::None;
-                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                    render_layered(hwnd);
                 }
             }
             0
         }
 
         WM_LBUTTONDOWN => {
-            let x = ((lparam as i32) & 0xFFFF) as i16 as f32;
-            let y = (((lparam as i32) >> 16) & 0xFFFF) as i16 as f32;
+            let px = ((lparam as i32) & 0xFFFF) as i16 as i32;
+            let py = (((lparam as i32) >> 16) & 0xFFFF) as i16 as i32;
+            let (x, y) = phys_to_logical(px, py);
             if let Some(state) = STATE.as_mut() {
                 let hit = hit_test_control(state, x, y);
                 if hit != HitId::None {
                     state.pressed = hit;
                     SetCapture(hwnd);
-                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                    render_layered(hwnd);
                 }
             }
             0
         }
 
         WM_LBUTTONUP => {
-            let x = ((lparam as i32) & 0xFFFF) as i16 as f32;
-            let y = (((lparam as i32) >> 16) & 0xFFFF) as i16 as f32;
+            let px = ((lparam as i32) & 0xFFFF) as i16 as i32;
+            let py = (((lparam as i32) >> 16) & 0xFFFF) as i16 as i32;
+            let (x, y) = phys_to_logical(px, py);
             ReleaseCapture();
 
             let mut action = HitId::None;
@@ -816,7 +1125,7 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             if action != HitId::None {
                 handle_click(hwnd, action);
             }
-            InvalidateRect(hwnd, std::ptr::null(), 0);
+            render_layered(hwnd);
             0
         }
 
@@ -835,7 +1144,7 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             if let Some(state) = STATE.as_mut() {
                 state.progress = PROGRESS_VAL.load(Ordering::SeqCst);
             }
-            InvalidateRect(hwnd, std::ptr::null(), 0);
+            render_layered(hwnd);
             0
         }
 
@@ -856,9 +1165,10 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
                 let mut pt = POINT { x: 0, y: 0 };
                 GetCursorPos(&mut pt);
                 ScreenToClient(hwnd, &mut pt);
-                state.hover = hit_test_control(state, pt.x as f32, pt.y as f32);
+                let (lx, ly) = phys_to_logical(pt.x, pt.y);
+                state.hover = hit_test_control(state, lx, ly);
             }
-            InvalidateRect(hwnd, std::ptr::null(), 0);
+            render_layered(hwnd);
             0
         }
 
@@ -1223,7 +1533,7 @@ fn register_uninstaller(target_exe: &Path, target_uninst: &Path, target_ico: &Pa
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     if let Ok((key, _)) = hkcu.create_subkey(UNINSTALL_KEY_PATH) {
         let _ = key.set_value("DisplayName", &"FreeView 3.3");
-        let _ = key.set_value("DisplayVersion", &"3.3.0");
+        let _ = key.set_value("DisplayVersion", &"3.3.1");
         let _ = key.set_value("Publisher", &"QuarterPi & knoblab");
         let _ = key.set_value("DisplayIcon", &target_ico.to_string_lossy().as_ref());
         let uninst_cmd = format!("\"{}\" --uninstall", target_uninst.to_string_lossy());

@@ -673,11 +673,11 @@ mod tests {
 
     #[test]
     fn test_version_comparison() {
-        assert!(is_newer_version("v3.3.1", "3.3.0"));
-        assert!(is_newer_version("3.4.0", "3.3.0"));
+        assert!(is_newer_version("v3.3.2", "3.3.1"));
+        assert!(is_newer_version("3.4.0", "3.3.1"));
         assert!(is_newer_version("4.0.0", "3.9.9"));
-        assert!(!is_newer_version("v3.3.0", "3.3.0"));
-        assert!(!is_newer_version("3.2.2", "3.3.0"));
-        assert!(!is_newer_version("v3.3.0-test", "3.3.0"));
+        assert!(!is_newer_version("v3.3.1", "3.3.1"));
+        assert!(!is_newer_version("3.3.0", "3.3.1"));
+        assert!(!is_newer_version("v3.3.1-test", "3.3.1"));
     }
 }

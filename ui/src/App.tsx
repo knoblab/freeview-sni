@@ -4,7 +4,7 @@ import { appBridge } from './bridge';
 export default function App() {
   const [isServiceRunning, setIsServiceRunning] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
-  const [version, setVersion] = useState('3.3.0');
+  const [version, setVersion] = useState('3.3.1');
   const [updateLabel, setUpdateLabel] = useState('업데이트 확인');
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
 

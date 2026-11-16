@@ -1,4 +1,4 @@
-# FreeView 3.3.0 (Minimal Concept UI & Native Rust Edition)
+# FreeView 3.3.1 (Minimal Concept UI & Native Rust Edition)
 
 Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI 기반 네트워크 차단을 우회하여 자유로운 웹 서핑과 DNS 보안을 제공하는 초경량 유저스페이스 터널링 프로그램입니다.
 
@@ -6,8 +6,11 @@ Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI �
 
 ---
 
-## 🌟 주요 특징 및 3.3.0 개선 사항
+## 🌟 주요 특징 및 3.3.1 개선 사항
 
+* **창 경계 안티엘리어싱 및 ClearType / HiDPI 선명도 개선 (3.3.1)**:
+  * **설치 마법사 Per-Pixel Alpha 레이어드 렌더링 & HiDPI 지원**: `WS_EX_LAYERED` + `UpdateLayeredWindow`(`PixelFormat32bppPARGB` GDI+ 안티엘리어싱)와 `PerMonitorV2` HiDPI 인식, 네이티브 Windows ClearType(`CLEARTYPE_QUALITY`) + 32비트 DIB 알파 복원을 적용해 모서리 계단 현상과 글씨 흐림을 제거했습니다.
+  * **메인 앱 모서리 클리핑 방지 & 폰트 렌더링 개선**: WebView2 뷰포트 외곽 여백(`354 × 209` 내 `350 × 205` 카드)으로 비정수 DPI에서의 경계 클리핑을 방지하고, 정수 픽셀 정렬과 `subpixel-antialiased` 렌더링으로 가독성을 개선했습니다.
 * **미니멀 Figma 컨셉 UI & 로컬 폰트 번들링 (3.3.0)**:
   * **컴팩트 팝업 UI (`350 × 205`, `1.2x` 스케일)**: `"켜기"`/`"끄기"` 단일 원버튼 토글과 `"로그 보기"`, `"깃허브"`, `"업데이트 확인"` 액션으로 화면을 단순화했습니다.
   * **오프라인 `IBM Plex Sans KR` 폰트 번들링**: `@fontsource/ibm-plex-sans-kr` `.woff2` 서브셋을 UI 내부에 번들링하여 외부 CDN 의존성 없이 동일한 타이포그래피를 제공합니다.
@@ -15,8 +18,8 @@ Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI �
 * **트레이/검색 전용 팝업 생명주기 & 최소화 제거 (3.3.0)**:
   * 작업 표시줄 노출(`skipTaskbar`)과 최소화 버튼을 제거하고, 시스템 트레이 클릭 또는 프로그램 재실행(Windows 검색/바로가기)으로만 창을 엽니다.
   * 창 바깥을 클릭해 포커스를 잃으면 창을 숨기는 대신 WebView2 프로세스를 완전히 종료하여 백그라운드 메모리 점유를 즉시 해제합니다.
-* **컨셉 일치형 4단계 설치 마법사 (3.3.0)**:
-  * `FreeView Setup 3.3.0.exe`를 메인 UI와 동일한 `350 × 205` 라이트 톤 보더리스 GDI+ 4단계 마법사(경로 선택 → 자동 실행/바로가기 옵션 → 설치 진행률 바 → 완료/실행)로 전면 재구현했습니다.
+* **컨셉 일치형 4단계 설치 마법사 (3.3.0 / 3.3.1)**:
+  * `FreeView Setup 3.3.1.exe`를 메인 UI와 동일한 `350 × 205` 라이트 톤 보더리스 GDI+ 4단계 마법사(경로 선택 → 자동 실행/바로가기 옵션 → 설치 진행률 바 → 완료/실행)로 전면 재구현했습니다.
 * **고대역폭 프록시 릴레이 & 지연시간 최적화 (3.2.2)**:
   * **적응형 릴레이 버퍼 (`16 KB -> 128 KB`) & 타이머 스래싱 제거**: 유휴/소형 연결의 메모리 효율을 유지하면서 대용량 스트리밍 시 시스템콜과 Tokio 타이머 휠 부하를 대폭 절감했습니다.
   * **멀티스레드 Tokio 런타임 스케줄링 & `opt-level = 3`**: 코어 수에 맞춘 워커 스레드 확장(4~8개) 및 속도 최적화 컴파일 프로파일을 적용했습니다.
@@ -39,7 +42,7 @@ Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI �
 ## 🚀 다운로드 및 설치
 
 ### 1. 원클릭 설치 프로그램 (권장)
-루트 폴더의 **`FreeView Setup 3.3.0.exe`**를 실행하면 간편하게 설치가 완료됩니다:
+루트 폴더의 **`FreeView Setup 3.3.1.exe`**를 실행하면 간편하게 설치가 완료됩니다:
 * 설치 경로: `%LOCALAPPDATA%\Programs\FreeView` (관리자 권한 UAC 창 없이 설치, 폴더 변경 가능)
 * 바탕화면 및 시작 메뉴 바로가기 생성 옵션 제공
 * 제어판 "앱 및 기능" 등록
