@@ -1,0 +1,265 @@
+/* FreeView 3.3.1 — Figma Concept Design (1.2x Scale, Anti-Aliased & Crisp Text) */
+
+:root {
+  --fv-bg: #f7f6f2;
+  --fv-off-bg: #888783;
+  --fv-off-bg-hover: #7a7975;
+  --fv-off-bg-active: #6e6d69;
+  --fv-on-bg: #45707a;
+  --fv-on-bg-hover: #3c626b;
+  --fv-on-bg-active: #34565e;
+  --fv-btn-bg: #e7e6e1;
+  --fv-btn-bg-hover: #dcdbd5;
+  --fv-btn-bg-active: #d1d0c9;
+  --fv-btn-text: #535356;
+  --fv-title-text: #000000;
+  --fv-toggle-text: #f7f6f2;
+  --fv-font-sans: 'IBM Plex Sans KR', 'Malgun Gothic', -apple-system, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: var(--fv-font-sans);
+  font-weight: 400;
+  font-synthesis: none;
+  -webkit-font-smoothing: subpixel-antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+}
+
+button {
+  font-family: inherit;
+  font-weight: 400;
+  border: none;
+  background: none;
+  cursor: pointer;
+  outline: none;
+}
+
+.fv-window {
+  position: relative;
+  width: 350px;
+  height: 205px;
+  border-radius: 19px;
+  background-color: var(--fv-bg);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.fv-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 29px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+}
+
+.fv-title {
+  font-size: 14px;
+  line-height: normal;
+  font-weight: 400;
+  color: var(--fv-title-text);
+  text-align: center;
+  padding-top: 1px;
+  pointer-events: none;
+}
+
+.fv-toggle-btn {
+  position: absolute;
+  left: 11px;
+  top: 31px;
+  width: 328px;
+  height: 74px;
+  border-radius: 8px;
+  background-color: var(--fv-off-bg);
+  color: var(--fv-toggle-text);
+  font-size: 24px;
+  line-height: normal;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s ease, transform 0.08s ease;
+}
+
+.fv-toggle-btn:hover:not(:disabled) {
+  background-color: var(--fv-off-bg-hover);
+}
+
+.fv-toggle-btn:active:not(:disabled) {
+  background-color: var(--fv-off-bg-active);
+  transform: scale(0.995);
+}
+
+.fv-toggle-btn.is-on {
+  background-color: var(--fv-on-bg);
+}
+
+.fv-toggle-btn.is-on:hover:not(:disabled) {
+  background-color: var(--fv-on-bg-hover);
+}
+
+.fv-toggle-btn.is-on:active:not(:disabled) {
+  background-color: var(--fv-on-bg-active);
+}
+
+.fv-toggle-btn:disabled {
+  cursor: wait;
+  opacity: 0.85;
+}
+
+.fv-secondary-btn {
+  position: absolute;
+  height: 37px;
+  border-radius: 8px;
+  background-color: var(--fv-btn-bg);
+  color: var(--fv-btn-text);
+  font-size: 14px;
+  line-height: normal;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s ease, transform 0.08s ease;
+}
+
+.fv-secondary-btn:hover:not(:disabled) {
+  background-color: var(--fv-btn-bg-hover);
+}
+
+.fv-secondary-btn:active:not(:disabled) {
+  background-color: var(--fv-btn-bg-active);
+  transform: scale(0.995);
+}
+
+.fv-secondary-btn:disabled {
+  cursor: wait;
+}
+
+.fv-log-btn {
+  left: 11px;
+  top: 113px;
+  width: 328px;
+}
+
+.fv-github-btn {
+  left: 11px;
+  top: 157px;
+  width: 161px;
+}
+
+.fv-update-btn {
+  left: 178px;
+  top: 157px;
+  width: 161px;
+}
+
+/* Android / Mobile Responsive Layout */
+.fv-window.is-mobile {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  border: none;
+  padding: calc(env(safe-area-inset-top, 16px) + 16px) 20px calc(env(safe-area-inset-bottom, 16px) + 20px) 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.fv-window.is-mobile .fv-topbar {
+  position: static;
+  height: auto;
+  padding: 8px 0 4px 0;
+}
+
+.fv-window.is-mobile .fv-title {
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.fv-window.is-mobile .fv-toggle-btn {
+  position: static;
+  width: 100%;
+  height: 112px;
+  font-size: 28px;
+  border-radius: 14px;
+  flex-shrink: 0;
+}
+
+.fv-mobile-status {
+  text-align: center;
+  font-size: 13px;
+  color: var(--fv-btn-text);
+  padding: 2px 4px;
+}
+
+.fv-window.is-mobile .fv-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: 100%;
+}
+
+.fv-window.is-mobile .fv-secondary-btn {
+  position: static;
+  width: 100%;
+  height: 46px;
+  border-radius: 10px;
+  font-size: 15px;
+}
+
+.fv-window.is-mobile .fv-log-btn {
+  grid-column: 1 / -1;
+}
+
+.fv-mobile-logs {
+  flex: 1;
+  min-height: 140px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #333;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.fv-log-line {
+  word-break: break-all;
+  margin-bottom: 4px;
+}
+
+.fv-log-empty {
+  color: #888;
+  text-align: center;
+  padding: 16px 0;
+}

@@ -1,0 +1,7 @@
+{
+  "name": "freeview-root",
+  "private": true,
+  "scripts": {
+    "tauri": "ui\\node_modules\\.bin\\tauri.cmd"
+  }
+}

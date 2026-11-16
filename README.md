@@ -71,4 +71,5 @@ Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI �
 ---
 
 ## 📄 라이선스
-* Copyright © 2024 - 2026 QuarterPi & knoblab. All rights reserved.
+* 본 프로젝트는 [MIT License](LICENSE)에 따라 배포됩니다. (`Copyright (c) 2026 Knoblab`)
+* 서드파티 오픈소스 및 번들 컴포넌트(폰트, WebView2 로더 등)의 라이선스 고지는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 참고해 주세요.

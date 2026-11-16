@@ -1,12 +1,21 @@
 # Rust
-/target
-target/
+**/target/
 **/*.rs.bk
 *.log
 
 # Node & Frontend
-node_modules/
-ui/node_modules/
+**/node_modules/
+**/ui/dist/
+
+# Android Build & Signing
+**/gen/android/.gradle/
+**/gen/android/app/build/
+**/gen/android/app/src/main/jniLibs/
+**/gen/android/app/src/main/assets/
+**/*.jks
+**/*.keystore
+**/*.apk
+**/*.aab
 
 # OS & Editor
 .DS_Store
@@ -15,5 +24,5 @@ Thumbs.db
 .vscode/
 *.tmp
 .env*
-! .env.example
-bench_results/
+!.env.example
+**/bench_results/
