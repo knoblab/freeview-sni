@@ -2,62 +2,111 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ShieldCheck, Sun, Moon, Power, Terminal, X, Minus } from 'lucide-react';
 import { appBridge } from './bridge';
 
+interface LogEntry {
+  id: number;
+  text: string;
+}
+
+const MAX_UI_LOGS = 200;
+
 export default function App() {
   const [isServiceRunning, setIsServiceRunning] = useState(false);
+  const [port, setPort] = useState(8080);
   const [isTransitioning, setIsTransitioning] = useState(false);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
-  const [version, setVersion] = useState('3.1.0');
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const [version, setVersion] = useState('3.2.0');
+  const [isPageVisible, setIsPageVisible] = useState<boolean>(() => !document.hidden);
+
+  const logsContainerRef = useRef<HTMLDivElement>(null);
+  const nextLogIdRef = useRef(0);
+  const isNearBottomRef = useRef(true);
 
   useEffect(() => {
-    // Initialize theme
     const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null;
     const initialTheme = savedTheme || 'light';
     setTheme(initialTheme);
     document.documentElement.setAttribute('data-theme', initialTheme);
 
-    // Initial state
+    let cancelled = false;
+    let unlistenLog: (() => void) | null = null;
+    let unlistenStatus: (() => void) | null = null;
+
     appBridge.getInitialState().then((state) => {
+      if (cancelled) return;
       setIsServiceRunning(state.isServiceRunning);
-      setLogs(state.logs);
+      if (state.port) setPort(state.port);
+      setLogs(
+        state.logs.slice(-MAX_UI_LOGS).map((text) => ({
+          id: ++nextLogIdRef.current,
+          text,
+        })),
+      );
       if (state.version) {
         setVersion(state.version);
       }
     });
 
-    let unlistenLog: (() => void) | null = null;
-    let unlistenStatus: (() => void) | null = null;
-
-    // Real-time log listener
-    appBridge.onLogUpdate((log) => {
-      setLogs((prev) => {
-        const next = [...prev, log];
-        return next.length > 500 ? next.slice(next.length - 500) : next;
+    appBridge
+      .onLogUpdate((log) => {
+        if (cancelled) return;
+        const id = ++nextLogIdRef.current;
+        setLogs((prev) => {
+          const next = [...prev, { id, text: log }];
+          return next.length > MAX_UI_LOGS ? next.slice(next.length - MAX_UI_LOGS) : next;
+        });
+      })
+      .then((unlisten) => {
+        if (cancelled) {
+          unlisten();
+        } else {
+          unlistenLog = unlisten;
+        }
       });
-    }).then((unlisten) => {
-      unlistenLog = unlisten;
-    });
 
-    // Real-time status listener
-    appBridge.onStatusUpdate((status) => {
-      setIsServiceRunning(status);
-    }).then((unlisten) => {
-      unlistenStatus = unlisten;
-    });
+    appBridge
+      .onStatusUpdate((status) => {
+        if (cancelled) return;
+        setIsServiceRunning(status.isRunning);
+        if (status.port) setPort(status.port);
+      })
+      .then((unlisten) => {
+        if (cancelled) {
+          unlisten();
+        } else {
+          unlistenStatus = unlisten;
+        }
+      });
+
+    const handleVisibilityChange = () => {
+      setIsPageVisible(!document.hidden);
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (unlistenLog) unlistenLog();
       if (unlistenStatus) unlistenStatus();
     };
   }, []);
 
-  // Auto scroll
+  // Scroll log panel using rAF without smooth-scroll CPU churn
   useEffect(() => {
-    if (logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
+    if (!isNearBottomRef.current) return;
+    const el = logsContainerRef.current;
+    if (!el) return;
+    const frameId = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frameId);
   }, [logs]);
+
+  const handleLogsScroll = () => {
+    const el = logsContainerRef.current;
+    if (!el) return;
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  };
 
   const toggleTheme = () => {
     const nextTheme = theme === 'light' ? 'dark' : 'light';
@@ -79,8 +128,9 @@ export default function App() {
     if (isTransitioning) return;
     setIsTransitioning(true);
     try {
-      const nextStatus = await appBridge.toggleService();
-      setIsServiceRunning(nextStatus);
+      const status = await appBridge.toggleService();
+      setIsServiceRunning(status.isRunning);
+      if (status.port) setPort(status.port);
     } catch (e) {
       console.error(e);
     } finally {
@@ -88,13 +138,16 @@ export default function App() {
     }
   };
 
+  const animPausedClass = isPageVisible ? '' : 'anim-paused';
+
   return (
-    <div className="pdf-app pdf-grid-bg" style={{ paddingTop: '32px', height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      
+    <div
+      className="pdf-app pdf-grid-bg"
+      style={{ paddingTop: '32px', height: '100vh', display: 'flex', flexDirection: 'column' }}
+    >
       {/* 1. Custom Titlebar */}
       <div
         className="custom-titlebar"
-        data-tauri-drag-region
         onMouseDown={handleTitleBarMouseDown}
         style={{
           position: 'fixed',
@@ -111,7 +164,7 @@ export default function App() {
           paddingLeft: '10px',
           userSelect: 'none',
           WebkitUserSelect: 'none',
-          cursor: 'default'
+          cursor: 'default',
         }}
       >
         <div className="custom-titlebar-left" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -131,17 +184,16 @@ export default function App() {
               backgroundColor: 'var(--color-bg-secondary)',
               color: 'var(--color-text-primary)',
               cursor: 'pointer',
-              transition: 'all 0.2s'
+              transition: 'background-color 0.2s, border-color 0.2s',
             }}
             title="Theme Toggle"
           >
             {theme === 'light' ? <Moon size={12} /> : <Sun size={12} />}
           </button>
         </div>
-        
+
         <div
           className="custom-titlebar-center"
-          data-tauri-drag-region
           style={{
             fontSize: '13px',
             fontWeight: 700,
@@ -149,12 +201,12 @@ export default function App() {
             position: 'absolute',
             left: '50%',
             transform: 'translateX(-50%)',
-            pointerEvents: 'none'
+            pointerEvents: 'none',
           }}
         >
           FreeView
         </div>
-        
+
         <div className="custom-titlebar-right" style={{ display: 'flex', height: '100%', alignItems: 'center' }}>
           <button
             type="button"
@@ -170,7 +222,7 @@ export default function App() {
               border: 'none',
               background: 'transparent',
               cursor: 'pointer',
-              transition: 'background-color 0.2s'
+              transition: 'background-color 0.2s',
             }}
             title="Minimize"
           >
@@ -190,7 +242,7 @@ export default function App() {
               border: 'none',
               background: 'transparent',
               cursor: 'pointer',
-              transition: 'background-color 0.2s'
+              transition: 'background-color 0.2s',
             }}
             title="Close"
           >
@@ -200,26 +252,31 @@ export default function App() {
       </div>
 
       {/* 2. Main Viewport */}
-      <div className="pdf-content-relative" style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '24px 20px',
-        boxSizing: 'border-box',
-        overflow: 'hidden'
-      }}>
-        
+      <div
+        className="pdf-content-relative"
+        style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '24px 20px',
+          boxSizing: 'border-box',
+          overflow: 'hidden',
+        }}
+      >
         {/* Title & Version */}
         <div
           className="pdf-text-center"
-          data-tauri-drag-region
           onMouseDown={handleTitleBarMouseDown}
           style={{ marginTop: '16px', cursor: 'default', userSelect: 'none' }}
         >
-          <h1 className="pdf-text-heading-32" style={{ fontWeight: 800, color: 'var(--color-text-primary)' }}>FreeView</h1>
-          <p className="pdf-text-copy-14 pdf-text-muted" style={{ marginTop: '4px' }}>Version {version}</p>
+          <h1 className="pdf-text-heading-32" style={{ fontWeight: 800, color: 'var(--color-text-primary)' }}>
+            FreeView
+          </h1>
+          <p className="pdf-text-copy-14 pdf-text-muted" style={{ marginTop: '4px' }}>
+            Version {version}
+          </p>
         </div>
 
         {/* Center Power Button */}
@@ -228,8 +285,9 @@ export default function App() {
             type="button"
             onClick={handleToggleService}
             disabled={isTransitioning}
-            className={`pdf-btn-primary ${isServiceRunning ? 'anim-pulse' : 'off-state'}`}
+            className={`pdf-btn-primary ${isServiceRunning ? `anim-pulse ${animPausedClass}` : 'off-state'}`}
             style={{
+              position: 'relative',
               width: '120px',
               height: '120px',
               borderRadius: '50%',
@@ -243,32 +301,33 @@ export default function App() {
               color: isServiceRunning ? '#ffffff' : 'var(--color-text-secondary)',
               cursor: isTransitioning ? 'not-allowed' : 'pointer',
               boxShadow: isServiceRunning ? 'var(--shadow-functional-glow)' : 'var(--shadow-hardware-bevel)',
-              transition: 'all 0.3s ease'
+              transition: 'background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease',
             }}
           >
-            <Power 
-              size={36} 
-              className={isTransitioning ? 'anim-spin' : ''} 
-              style={{ 
+            <Power
+              size={36}
+              className={isTransitioning ? `anim-spin ${animPausedClass}` : ''}
+              style={{
                 transform: isServiceRunning ? 'scale(1.1)' : 'scale(1)',
-                transition: 'transform 0.3s'
-              }} 
+                transition: 'transform 0.25s ease',
+              }}
             />
             <span style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '0.5px' }}>
-              {isTransitioning 
-                ? (isServiceRunning ? 'STOPPING...' : 'STARTING...') 
-                : (isServiceRunning ? 'ACTIVE' : 'OFF')}
+              {isTransitioning ? (isServiceRunning ? 'STOPPING...' : 'STARTING...') : isServiceRunning ? 'ACTIVE' : 'OFF'}
             </span>
           </button>
-          
+
           <div className="pdf-flex-row pdf-items-center pdf-gap-050" style={{ marginTop: '8px' }}>
-            <div className="pdf-indicator-dot" style={{
-              backgroundColor: isServiceRunning ? 'var(--color-functional-red)' : 'var(--color-border-hover)',
-              boxShadow: isServiceRunning ? '0 0 8px var(--color-functional-red)' : 'none',
-              transition: 'all 0.3s'
-            }}></div>
+            <div
+              className="pdf-indicator-dot"
+              style={{
+                backgroundColor: isServiceRunning ? 'var(--color-functional-red)' : 'var(--color-border-hover)',
+                boxShadow: isServiceRunning ? '0 0 8px var(--color-functional-red)' : 'none',
+                transition: 'background-color 0.25s ease',
+              }}
+            />
             <span className="pdf-text-copy-13-mono pdf-text-muted">
-              {isServiceRunning ? '보호 가동 중 (127.0.0.1:8080)' : '대기 상태 (보호 꺼짐)'}
+              {isServiceRunning ? `보호 가동 중 (127.0.0.1:${port})` : '대기 상태 (보호 꺼짐)'}
             </span>
           </div>
         </div>
@@ -277,24 +336,33 @@ export default function App() {
         <div className="pdf-w-full" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div className="pdf-flex-row pdf-items-center pdf-gap-050" style={{ paddingLeft: '4px' }}>
             <Terminal size={14} className="pdf-text-muted" />
-            <span className="pdf-text-label-16" style={{ fontSize: '11px', color: 'var(--color-text-secondary)', fontWeight: 700 }}>
+            <span
+              className="pdf-text-label-16"
+              style={{ fontSize: '11px', color: 'var(--color-text-secondary)', fontWeight: 700 }}
+            >
               SYSTEM STATUS
             </span>
           </div>
-          
-          <div className="pdf-panel" style={{
-            height: '160px',
-            overflowY: 'auto',
-            padding: '12px',
-            backgroundColor: 'var(--color-bg-secondary)',
-            border: '1px solid var(--color-border-default)',
-            borderRadius: '8px',
-            margin: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '6px'
-          }}>
-            {logs.map((log, index) => {
+
+          <div
+            ref={logsContainerRef}
+            onScroll={handleLogsScroll}
+            className="pdf-panel"
+            style={{
+              height: '160px',
+              overflowY: 'auto',
+              padding: '12px',
+              backgroundColor: 'var(--color-bg-secondary)',
+              border: '1px solid var(--color-border-default)',
+              borderRadius: '8px',
+              margin: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '6px',
+            }}
+          >
+            {logs.map((entry) => {
+              const log = entry.text;
               const isError = log.includes('Error') || log.includes('실패') || log.includes('오류');
               const isSuccess = log.includes('✓');
               let textColor = 'var(--color-text-primary)';
@@ -304,34 +372,37 @@ export default function App() {
                 const endBracketIdx = log.indexOf(']');
                 if (endBracketIdx !== -1) {
                   return (
-                    <div key={index} className="pdf-text-copy-13-mono" style={{ color: 'var(--color-text-primary)', wordBreak: 'break-all' }}>
-                      <span style={{ color: 'var(--color-text-secondary)' }}>
-                        {log.substring(0, endBracketIdx + 1)}
-                      </span>
+                    <div
+                      key={entry.id}
+                      className="pdf-text-copy-13-mono"
+                      style={{ color: 'var(--color-text-primary)', wordBreak: 'break-all' }}
+                    >
+                      <span style={{ color: 'var(--color-text-secondary)' }}>{log.substring(0, endBracketIdx + 1)}</span>
                       {log.substring(endBracketIdx + 1)}
                     </div>
                   );
                 }
               }
-              
+
               return (
-                <div key={index} className="pdf-text-copy-13-mono" style={{ color: textColor, wordBreak: 'break-all' }}>
+                <div key={entry.id} className="pdf-text-copy-13-mono" style={{ color: textColor, wordBreak: 'break-all' }}>
                   {log}
                 </div>
               );
             })}
-            <div ref={logsEndRef} />
           </div>
         </div>
 
         {/* Footer */}
-        <div className="pdf-w-full pdf-text-center" style={{ marginTop: '12px', fontSize: '10px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>
+        <div
+          className="pdf-w-full pdf-text-center"
+          style={{ marginTop: '12px', fontSize: '10px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}
+        >
           <div>쿼터파이 © 2024 - 2026</div>
         </div>
-
       </div>
 
-      {/* Style definitions */}
+      {/* Component animations (GPU-composited opacity/transform only, paused when hidden) */}
       <style>{`
         .titlebar-win-btn:hover {
           background-color: var(--color-bg-secondary);
@@ -345,21 +416,32 @@ export default function App() {
           color: var(--color-text-primary) !important;
           background-color: var(--color-bg-secondary) !important;
         }
-        @keyframes pulse-glow {
-          0% { box-shadow: 0 0 4px var(--color-border-default); }
-          50% { box-shadow: 0 0 16px var(--color-functional-red); }
-          100% { box-shadow: 0 0 4px var(--color-border-default); }
+        @keyframes pulse-ring {
+          0%, 100% { opacity: 0.12; transform: scale(0.98); }
+          50% { opacity: 0.75; transform: scale(1.04); }
         }
         @keyframes spin-slow {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
-        .anim-pulse {
-          animation: pulse-glow 1.5s infinite ease-in-out;
+        .anim-pulse::after {
+          content: "";
+          position: absolute;
+          inset: -6px;
+          border-radius: 50%;
+          border: 2px solid var(--color-functional-red);
+          box-shadow: 0 0 14px var(--color-functional-red);
+          pointer-events: none;
+          will-change: opacity, transform;
+          animation: pulse-ring 2s infinite ease-in-out;
         }
         .anim-spin {
           animation: spin-slow 1.2s infinite linear;
           transform-origin: center;
+        }
+        .anim-paused,
+        .anim-paused::after {
+          animation-play-state: paused !important;
         }
       `}</style>
     </div>

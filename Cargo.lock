@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "freeview"
-version = "3.1.0"
+version = "3.2.0"
 dependencies = [
  "hickory-resolver",
  "serde",
@@ -1066,6 +1066,8 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-single-instance",
  "tokio",
+ "webview2-com",
+ "windows-core",
  "windows-sys 0.59.0",
  "winreg 0.52.0",
  "winresource",

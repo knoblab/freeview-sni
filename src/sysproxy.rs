@@ -18,6 +18,16 @@ pub struct ProxySnapshot {
     pub auto_config_url: Option<String>,
 }
 
+pub fn is_freeview_proxy_server(s: &str) -> bool {
+    let trimmed = s.trim();
+    if let Some(port_str) = trimmed.strip_prefix("127.0.0.1:") {
+        if let Ok(port) = port_str.parse::<u16>() {
+            return (8080..=8100).contains(&port);
+        }
+    }
+    false
+}
+
 impl ProxySnapshot {
     /// 현재 Windows 레지스트리에 저장된 프록시 설정 스냅샷을 캡처합니다.
     /// (FreeView 이전 세션의 잔여값은 스냅샷에서 안전하게 필터링)
@@ -25,15 +35,16 @@ impl ProxySnapshot {
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let key = hkcu.open_subkey_with_flags(INET_SETTINGS_PATH, KEY_READ)?;
 
-        let proxy_enable = key.get_value("ProxyEnable").ok();
+        let mut proxy_enable: Option<u32> = key.get_value("ProxyEnable").ok();
         let mut proxy_server: Option<String> = key.get_value("ProxyServer").ok();
         let proxy_override: Option<String> = key.get_value("ProxyOverride").ok();
         let mut auto_config_url: Option<String> = key.get_value("AutoConfigURL").ok();
 
-        // 1. FreeView 이전 세션 잔류 ProxyServer 필터링 (127.0.0.1:808X)
+        // 1. FreeView 이전 세션 잔류 ProxyServer 필터링 (127.0.0.1:8080..8100)
         if let Some(ref s) = proxy_server {
-            if s.starts_with("127.0.0.1:808") {
+            if is_freeview_proxy_server(s) {
                 proxy_server = None;
+                proxy_enable = Some(0);
             }
         }
 
@@ -86,7 +97,7 @@ pub fn apply_proxy(port: u16) -> io::Result<ProxySnapshot> {
     key.set_value("ProxyServer", &format!("127.0.0.1:{}", port))?;
     key.set_value(
         "ProxyOverride",
-        &"<local>;localhost;127.*;10.*;172.16.*;192.168.*",
+        &"<local>;localhost;127.*;[::1];10.*;172.16.*;192.168.*",
     )?;
     key.set_value("ProxyEnable", &1u32)?;
 
@@ -128,8 +139,28 @@ pub fn restore_proxy(snapshot: Option<&ProxySnapshot>) -> io::Result<()> {
     } else {
         let _ = key.set_value("ProxyEnable", &0u32);
         let _ = key.delete_value("AutoConfigURL");
+        if let Ok(existing_server) = key.get_value::<String, _>("ProxyServer") {
+            if is_freeview_proxy_server(&existing_server) {
+                let _ = key.delete_value("ProxyServer");
+                let _ = key.delete_value("ProxyOverride");
+            }
+        }
     }
 
     refresh_wininet();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_freeview_proxy_server;
+
+    #[test]
+    fn test_freeview_proxy_server_match() {
+        assert!(is_freeview_proxy_server("127.0.0.1:8080"));
+        assert!(is_freeview_proxy_server("127.0.0.1:8095"));
+        assert!(is_freeview_proxy_server("127.0.0.1:8100"));
+        assert!(!is_freeview_proxy_server("127.0.0.1:9000"));
+        assert!(!is_freeview_proxy_server("10.0.0.1:8080"));
+    }
 }

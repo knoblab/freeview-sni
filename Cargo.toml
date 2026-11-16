@@ -1,6 +1,6 @@
 [package]
 name = "freeview"
-version = "3.1.0"
+version = "3.2.0"
 edition = "2021"
 authors = ["QuarterPi", "knoblab", "Contributors"]
 description = "High-performance native Windows anti-censorship SNI desync proxy with modern PDF-DS UI"
@@ -39,6 +39,10 @@ features = [
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
 winresource = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
 
 [profile.release]
 opt-level = "z"

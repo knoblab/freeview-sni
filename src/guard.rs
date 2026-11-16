@@ -1,25 +1,16 @@
-//! 비정상 종료 방어(Crash Guard), 자가 복구(Self-Healing) 및 단일 인스턴스 뮤텍스
+//! 비정상 종료 방어(Crash Guard) 및 자가 복구(Self-Healing) 모듈
 
-use std::ffi::c_void;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, BOOL, ERROR_ALREADY_EXISTS, HANDLE, HWND};
-use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE};
 
 use crate::sysproxy::{self, ProxySnapshot};
 
-#[allow(dead_code)]
-unsafe extern "system" {
-    fn CreateMutexW(
-        lp_mutex_attributes: *const c_void,
-        b_initial_owner: BOOL,
-        lp_name: *const u16,
-    ) -> HANDLE;
-}
-
+static APP_DIR: OnceLock<PathBuf> = OnceLock::new();
 static ACTIVE_SNAPSHOT: Mutex<Option<ProxySnapshot>> = Mutex::new(None);
+static NEEDS_RESTORE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ServiceState {
@@ -30,13 +21,17 @@ pub struct ServiceState {
 }
 
 pub fn get_app_dir() -> PathBuf {
-    let base = match std::env::var_os("LOCALAPPDATA") {
-        Some(val) => PathBuf::from(val),
-        None => std::env::temp_dir(),
-    };
-    let dir = base.join("FreeView");
-    let _ = fs::create_dir_all(&dir);
-    dir
+    APP_DIR
+        .get_or_init(|| {
+            let base = match std::env::var_os("LOCALAPPDATA") {
+                Some(val) => PathBuf::from(val),
+                None => std::env::temp_dir(),
+            };
+            let dir = base.join("FreeView");
+            let _ = fs::create_dir_all(&dir);
+            dir
+        })
+        .clone()
 }
 
 pub fn get_state_file_path() -> PathBuf {
@@ -44,6 +39,8 @@ pub fn get_state_file_path() -> PathBuf {
 }
 
 pub fn save_state(running: bool, snapshot: Option<ProxySnapshot>) {
+    NEEDS_RESTORE.store(running, Ordering::SeqCst);
+
     if let Ok(mut lock) = ACTIVE_SNAPSHOT.lock() {
         *lock = snapshot.clone();
     }
@@ -85,8 +82,11 @@ pub fn startup_self_heal() -> bool {
     }
 }
 
-/// 정상 종료 또는 비상 종료 시 프록시 설정을 동기식으로 원복합니다.
+/// 정상 종료 또는 비상 종료 시 미복원 상태인 경우에만 프록시 설정을 동기식으로 원복합니다.
 pub fn emergency_restore() {
+    if !NEEDS_RESTORE.swap(false, Ordering::SeqCst) {
+        return;
+    }
     let snapshot = ACTIVE_SNAPSHOT.lock().ok().and_then(|g| g.clone());
     let _ = sysproxy::restore_proxy(snapshot.as_ref());
     save_state(false, None);
@@ -103,50 +103,4 @@ pub fn register_panic_hook() {
         }
         default_hook(info);
     }));
-}
-
-// 단일 인스턴스는 tauri-plugin-single-instance가 처리합니다.
-#[allow(dead_code)]
-pub struct SingleInstanceGuard {
-    handle: HANDLE,
-}
-
-impl SingleInstanceGuard {
-    pub fn try_acquire(name: &str) -> Option<Self> {
-        let wide_name: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
-        unsafe {
-            let handle = CreateMutexW(std::ptr::null(), 1, wide_name.as_ptr());
-            if handle.is_null() {
-                return None;
-            }
-
-            if GetLastError() == ERROR_ALREADY_EXISTS {
-                CloseHandle(handle);
-                activate_existing_window();
-                return None;
-            }
-
-            Some(Self { handle })
-        }
-    }
-}
-
-impl Drop for SingleInstanceGuard {
-    fn drop(&mut self) {
-        unsafe {
-            if !self.handle.is_null() {
-                CloseHandle(self.handle);
-            }
-        }
-    }
-}
-
-#[allow(dead_code)]
-unsafe fn activate_existing_window() {
-    let class_name: Vec<u16> = "FreeView\0".encode_utf16().collect();
-    let hwnd: HWND = FindWindowW(class_name.as_ptr(), std::ptr::null());
-    if !hwnd.is_null() {
-        ShowWindow(hwnd, SW_RESTORE);
-        SetForegroundWindow(hwnd);
-    }
 }

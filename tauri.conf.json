@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
   "productName": "FreeView",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "identifier": "com.qpi.freeview",
   "build": {
     "frontendDist": "ui/dist"
@@ -11,14 +11,18 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "FreeView",
         "width": 380,
         "height": 600,
         "resizable": false,
+        "minimizable": true,
+        "maximizable": false,
         "decorations": false,
-        "skipTaskbar": true,
+        "skipTaskbar": false,
         "visible": false,
-        "transparent": false
+        "transparent": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider --disable-background-networking --disable-sync --disable-default-apps --disable-domain-reliability --no-pings"
       }
     ],
     "security": {

@@ -2,13 +2,25 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
+use hickory_resolver::config::{
+    LookupIpStrategy, NameServerConfig, Protocol, ResolverConfig, ResolverOpts,
+};
 use hickory_resolver::TokioAsyncResolver;
 
 const DOH_LOCAL_SUFFIXES: &[&str] = &[
-    ".local", ".localhost", ".internal", ".intranet",
-    ".lan", ".home", ".corp", ".private", ".test",
-    ".example", ".invalid",
+    ".local",
+    ".localhost",
+    ".localdomain",
+    ".internal",
+    ".intranet",
+    ".lan",
+    ".home",
+    ".home.arpa",
+    ".corp",
+    ".private",
+    ".test",
+    ".example",
+    ".invalid",
 ];
 
 pub struct DnsResolver {
@@ -19,20 +31,13 @@ impl DnsResolver {
     pub fn new() -> Self {
         let mut config = ResolverConfig::new();
 
-        // Cloudflare DNS (IPv4 & IPv6)
+        // Cloudflare DNS (IPv4 우선)
         config.add_name_server(NameServerConfig::new(
             SocketAddr::new(IpAddr::from([1, 1, 1, 1]), 53),
             Protocol::Udp,
         ));
         config.add_name_server(NameServerConfig::new(
             SocketAddr::new(IpAddr::from([1, 0, 0, 1]), 53),
-            Protocol::Udp,
-        ));
-        config.add_name_server(NameServerConfig::new(
-            SocketAddr::new(
-                "2606:4700:4700::1111".parse().unwrap(),
-                53,
-            ),
             Protocol::Udp,
         ));
 
@@ -42,10 +47,17 @@ impl DnsResolver {
             Protocol::Udp,
         ));
 
+        // Cloudflare IPv6 DNS
+        config.add_name_server(NameServerConfig::new(
+            SocketAddr::new("2606:4700:4700::1111".parse().unwrap(), 53),
+            Protocol::Udp,
+        ));
+
         let mut opts = ResolverOpts::default();
         opts.timeout = std::time::Duration::from_secs(3);
         opts.attempts = 2;
-        opts.cache_size = 1024;
+        opts.cache_size = 256;
+        opts.ip_strategy = LookupIpStrategy::Ipv4thenIpv6;
 
         let resolver = TokioAsyncResolver::tokio(config, opts);
         Self { resolver }
@@ -53,17 +65,22 @@ impl DnsResolver {
 
     /// 주어진 호스트명이 사내망/로컬 전용 도메인인지 검사합니다.
     pub fn is_local_domain(&self, hostname: &str) -> bool {
+        let host = hostname.trim_end_matches('.');
+        if host.is_empty() {
+            return true;
+        }
+
         // 1. IP 주소 리터럴인지 검사
-        if hostname.parse::<IpAddr>().is_ok() {
+        if host.parse::<IpAddr>().is_ok() {
             return true;
         }
 
-        // 2. 단일 라벨 호스트명 (점이 없는 내부 서버명, 예: 'intranet', 'nas')
-        if !hostname.contains('.') {
+        // 2. 단일 라벨 호스트명 (점이 없는 내부 서버명, 예: 'intranet', 'nas', 'localhost')
+        if !host.contains('.') {
             return true;
         }
 
-        let lower = hostname.to_lowercase();
+        let lower = host.to_ascii_lowercase();
         for suffix in DOH_LOCAL_SUFFIXES {
             if lower == &suffix[1..] || lower.ends_with(suffix) {
                 return true;
@@ -108,3 +125,21 @@ impl DnsResolver {
 }
 
 pub type SharedResolver = Arc<DnsResolver>;
+
+#[cfg(test)]
+mod tests {
+    use super::DnsResolver;
+
+    #[test]
+    fn test_is_local_domain() {
+        let r = DnsResolver::new();
+        assert!(r.is_local_domain("localhost"));
+        assert!(r.is_local_domain("localhost."));
+        assert!(r.is_local_domain("intranet.local."));
+        assert!(r.is_local_domain("printer.localdomain"));
+        assert!(r.is_local_domain("router.home.arpa."));
+        assert!(r.is_local_domain("192.168.0.1"));
+        assert!(!r.is_local_domain("example.com"));
+        assert!(!r.is_local_domain("www.google.com."));
+    }
+}

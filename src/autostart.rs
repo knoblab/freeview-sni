@@ -11,8 +11,9 @@ const APP_NAME: &str = "FreeView";
 pub fn is_autostart_enabled() -> bool {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     if let Ok(key) = hkcu.open_subkey_with_flags(RUN_KEY_PATH, KEY_READ) {
-        let val: Result<String, _> = key.get_value(APP_NAME);
-        return val.is_ok();
+        if let Ok(val) = key.get_value::<String, _>(APP_NAME) {
+            return !val.trim().is_empty();
+        }
     }
     false
 }

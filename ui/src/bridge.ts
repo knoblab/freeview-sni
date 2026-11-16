@@ -5,15 +5,22 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 
 export interface InitialState {
   isServiceRunning: boolean;
+  port: number;
   logs: string[];
   version: string;
+}
+
+export interface StatusPayload {
+  isRunning: boolean;
+  port: number;
+  error?: string | null;
 }
 
 export const appBridge = {
   minimize: async () => {
     try {
       const win = getCurrentWindow();
-      await win.hide();
+      await win.minimize();
     } catch (e) {
       console.warn('minimize failed:', e);
     }
@@ -22,7 +29,7 @@ export const appBridge = {
   close: async () => {
     try {
       const win = getCurrentWindow();
-      await win.hide();
+      await win.close();
     } catch (e) {
       console.warn('close failed:', e);
     }
@@ -37,12 +44,16 @@ export const appBridge = {
     }
   },
 
-  toggleService: async (): Promise<boolean> => {
+  toggleService: async (): Promise<StatusPayload> => {
     try {
-      return await invoke<boolean>('toggle_service');
+      return await invoke<StatusPayload>('toggle_service');
     } catch (e) {
       console.error('toggle_service error:', e);
-      return false;
+      return {
+        isRunning: false,
+        port: 8080,
+        error: String(e),
+      };
     }
   },
 
@@ -53,8 +64,9 @@ export const appBridge = {
       console.warn('get_initial_state fallback:', e);
       return {
         isServiceRunning: false,
+        port: 8080,
         logs: [],
-        version: "3.1.0"
+        version: '3.2.0',
       };
     }
   },
@@ -65,9 +77,9 @@ export const appBridge = {
     });
   },
 
-  onStatusUpdate: (callback: (status: boolean) => void): Promise<UnlistenFn> => {
-    return listen<boolean>('status-update', (event) => {
+  onStatusUpdate: (callback: (status: StatusPayload) => void): Promise<UnlistenFn> => {
+    return listen<StatusPayload>('status-update', (event) => {
       callback(event.payload);
     });
-  }
+  },
 };

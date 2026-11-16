@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 
+use std::cell::UnsafeCell;
 use std::fs;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -8,20 +9,24 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use winreg::enums::{HKEY_CURRENT_USER, KEY_WRITE};
 use winreg::RegKey;
 
-use windows_sys::Win32::Foundation::{BOOL, HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows_sys::Win32::Foundation::{
+    FreeLibrary, BOOL, HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM,
+};
 use windows_sys::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontW, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
     InvalidateRect, LineTo, MoveToEx, RoundRect, SelectObject, SetBkColor, SetBkMode, SetTextColor,
     HBRUSH, HDC, HFONT, PAINTSTRUCT, PS_SOLID,
 };
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
+use windows_sys::Win32::UI::Shell::{SHGetFolderPathW, CSIDL_DESKTOPDIRECTORY, CSIDL_PROGRAMS};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
-    GetMessageW, GetWindowTextW, LoadCursorW, PostQuitMessage, RegisterClassExW, SendMessageW,
-    SetWindowTextW, ShowWindow, TranslateMessage, BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX,
-    BS_OWNERDRAW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, HMENU, IDC_ARROW, MSG, SW_HIDE, SW_SHOW,
-    WM_CLOSE, WM_COMMAND, WM_CTLCOLORBTN, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DRAWITEM, WM_PAINT,
-    WM_SETFONT, WNDCLASSEXW, WS_CAPTION, WS_CHILD, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+    GetClientRect, GetMessageW, GetWindowTextW, LoadCursorW, MessageBoxW, PostQuitMessage,
+    RegisterClassExW, SendMessageW, SetWindowTextW, ShowWindow, TranslateMessage, BM_GETCHECK,
+    BM_SETCHECK, BS_AUTOCHECKBOX, BS_OWNERDRAW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, HMENU,
+    IDC_ARROW, MB_ICONINFORMATION, MB_OK, MSG, SW_HIDE, SW_SHOW, WM_CLOSE, WM_COMMAND,
+    WM_CTLCOLORBTN, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DRAWITEM, WM_PAINT, WM_SETFONT, WNDCLASSEXW,
+    WS_CAPTION, WS_CHILD, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
 #[repr(C)]
@@ -83,6 +88,28 @@ const COLOR_RED_HOVER: u32 = 0x002626DC;      // #dc2626
 static IS_FINISHED: AtomicBool = AtomicBool::new(false);
 static PROGRESS_POS: AtomicU32 = AtomicU32::new(0);
 
+/// Win32 UI 스레드 전용 전역 셀
+struct UiThreadCell<T>(UnsafeCell<Option<T>>);
+unsafe impl<T> Sync for UiThreadCell<T> {}
+
+impl<T> UiThreadCell<T> {
+    const fn new() -> Self {
+        Self(UnsafeCell::new(None))
+    }
+
+    unsafe fn set(&self, val: T) {
+        *self.0.get() = Some(val);
+    }
+
+    unsafe fn take(&self) -> Option<T> {
+        (*self.0.get()).take()
+    }
+
+    unsafe fn as_ref(&self) -> Option<&T> {
+        (*self.0.get()).as_ref()
+    }
+}
+
 struct WizardFonts {
     font_title: HFONT,
     font_badge: HFONT,
@@ -91,8 +118,6 @@ struct WizardFonts {
     font_mono: HFONT,
     font_btn: HFONT,
 }
-
-static mut FONTS: Option<WizardFonts> = None;
 
 #[allow(dead_code)]
 struct WizardControls {
@@ -109,7 +134,8 @@ struct WizardControls {
     brush_chip: HBRUSH,
 }
 
-static mut CONTROLS: Option<WizardControls> = None;
+static FONTS: UiThreadCell<WizardFonts> = UiThreadCell::new();
+static CONTROLS: UiThreadCell<WizardControls> = UiThreadCell::new();
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -125,12 +151,10 @@ fn run_install_wizard() {
         let h_instance = GetModuleHandleW(std::ptr::null());
         init_fonts();
 
-        // 1. 커스텀 프로그레스 바 클래스 등록
         register_progress_class(h_instance);
 
-        // 2. 메인 위저드 윈도우 클래스 등록
         let class_name: Vec<u16> = to_wide_null("FreeViewInstallerWizard");
-        let title: Vec<u16> = to_wide_null("FreeView 3.1 Setup");
+        let title: Vec<u16> = to_wide_null("FreeView 3.2 Setup");
 
         let brush_bg = CreateSolidBrush(COLOR_BG_PRIMARY);
         let brush_card = CreateSolidBrush(COLOR_BG_SECONDARY);
@@ -153,23 +177,30 @@ fn run_install_wizard() {
 
         RegisterClassExW(&wnd_class);
 
-        // 윈도우 크기: 500 x 400
+        let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+        let mut rc = RECT {
+            left: 0,
+            top: 0,
+            right: 486,
+            bottom: 366,
+        };
+        AdjustWindowRectEx(&mut rc, style, 0, 0);
+
         let hwnd = CreateWindowExW(
             0,
             class_name.as_ptr(),
             title.as_ptr(),
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+            style,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            500,
-            400,
+            rc.right - rc.left,
+            rc.bottom - rc.top,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             h_instance,
             std::ptr::null(),
         );
 
-        // Windows 10/11 다크 모드 타이틀바 적용
         apply_dark_mode(hwnd);
 
         create_wizard_controls(hwnd, h_instance, brush_bg, brush_card, brush_chip);
@@ -219,7 +250,7 @@ unsafe fn create_font(size: i32, weight: i32, name: &str) -> HFONT {
 }
 
 unsafe fn init_fonts() {
-    FONTS = Some(WizardFonts {
+    FONTS.set(WizardFonts {
         font_title: create_font(20, 800, "Segoe UI"),
         font_badge: create_font(9, 700, "Consolas"),
         font_subhead: create_font(10, 400, "Segoe UI"),
@@ -240,7 +271,7 @@ unsafe fn register_progress_class(h_instance: HMODULE) {
         hInstance: h_instance,
         hIcon: std::ptr::null_mut(),
         hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
-        hbrBackground: 0 as HBRUSH,
+        hbrBackground: std::ptr::null_mut(),
         lpszMenuName: std::ptr::null(),
         lpszClassName: class_name.as_ptr(),
         hIconSm: std::ptr::null_mut(),
@@ -257,14 +288,12 @@ unsafe extern "system" fn progress_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM
             let mut rc: RECT = std::mem::zeroed();
             GetClientRect(hwnd, &mut rc);
 
-            // 1. Dark track background (#27272a)
             let track_brush = CreateSolidBrush(COLOR_BORDER_DEFAULT);
             let track_pen = CreatePen(PS_SOLID as i32, 1, COLOR_BORDER_DEFAULT);
             let old_brush = SelectObject(hdc, track_brush);
             let old_pen = SelectObject(hdc, track_pen);
             RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, 6, 6);
 
-            // 2. Red progress fill (#ef4444)
             let pos = PROGRESS_POS.load(Ordering::SeqCst).min(100);
             if pos > 0 {
                 let fill_width = ((rc.right - rc.left) as f32 * (pos as f32 / 100.0)) as i32;
@@ -310,7 +339,6 @@ unsafe fn create_wizard_controls(
     let f_body = FONTS.as_ref().map(|f| f.font_body).unwrap_or(std::ptr::null_mut());
     let f_mono = FONTS.as_ref().map(|f| f.font_mono).unwrap_or(std::ptr::null_mut());
 
-    // 1. 설치 경로 텍스트 (옵션 카드 내부 칩)
     let install_dir_str = format!("설치 경로: {}", get_install_dir().to_string_lossy());
     let h_lbl_path = CreateWindowExW(
         0,
@@ -328,7 +356,6 @@ unsafe fn create_wizard_controls(
     );
     SendMessageW(h_lbl_path, WM_SETFONT, f_mono as WPARAM, 1);
 
-    // 2. 바로가기 체크박스들
     let h_chk_desktop = CreateWindowExW(
         0,
         btn_cls.as_ptr(),
@@ -383,7 +410,6 @@ unsafe fn create_wizard_controls(
     SendMessageW(h_chk_launch, BM_SETCHECK, BST_CHECKED as WPARAM, 0);
     apply_dark_theme(h_chk_launch);
 
-    // 3. 상태 안내 레이블
     let h_lbl_status = CreateWindowExW(
         0,
         static_cls.as_ptr(),
@@ -400,7 +426,6 @@ unsafe fn create_wizard_controls(
     );
     SendMessageW(h_lbl_status, WM_SETFONT, f_body as WPARAM, 1);
 
-    // 4. 커스텀 프로그레스 바
     let h_progress = CreateWindowExW(
         0,
         progress_cls.as_ptr(),
@@ -416,7 +441,6 @@ unsafe fn create_wizard_controls(
         std::ptr::null(),
     );
 
-    // 5. 하단 버튼들 (BS_OWNERDRAW)
     let h_btn_install = CreateWindowExW(
         0,
         btn_cls.as_ptr(),
@@ -447,7 +471,7 @@ unsafe fn create_wizard_controls(
         std::ptr::null(),
     );
 
-    CONTROLS = Some(WizardControls {
+    CONTROLS.set(WizardControls {
         h_lbl_status,
         h_lbl_path,
         h_chk_desktop,
@@ -471,16 +495,13 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             let mut rc_client: RECT = std::mem::zeroed();
             GetClientRect(hwnd, &mut rc_client);
 
-            // 1. Window Background (#09090b)
             let bg_brush = CreateSolidBrush(COLOR_BG_PRIMARY);
             FillRect(hdc, &rc_client, bg_brush);
             DeleteObject(bg_brush);
 
-            SetBkMode(hdc, 1 /* TRANSPARENT */);
+            SetBkMode(hdc, 1);
 
-            // 2. Header Drawing
-            if let Some(ref f) = FONTS {
-                // Red Shield Badge at (25, 18, 55, 48)
+            if let Some(f) = FONTS.as_ref() {
                 let shield_brush = CreateSolidBrush(COLOR_FUNCTIONAL_RED);
                 let shield_pen = CreatePen(PS_SOLID as i32, 1, COLOR_FUNCTIONAL_RED);
                 let old_b = SelectObject(hdc, shield_brush);
@@ -491,25 +512,21 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
                 DeleteObject(shield_brush);
                 DeleteObject(shield_pen);
 
-                // Shield Text: 'FV'
                 SelectObject(hdc, f.font_badge);
                 SetTextColor(hdc, COLOR_TEXT_PRIMARY);
                 let mut rc_shield = RECT { left: 25, top: 18, right: 55, bottom: 48 };
                 DrawTextW(hdc, to_wide_null("FV").as_ptr(), 2, &mut rc_shield, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-                // Title: 'FreeView 3.1'
                 SelectObject(hdc, f.font_title);
                 SetTextColor(hdc, COLOR_TEXT_PRIMARY);
                 let mut rc_title = RECT { left: 65, top: 12, right: 260, bottom: 36 };
-                DrawTextW(hdc, to_wide_null("FreeView 3.1").as_ptr(), 12, &mut rc_title, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                DrawTextW(hdc, to_wide_null("FreeView 3.2").as_ptr(), 12, &mut rc_title, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-                // Tag: '[SETUP]'
                 SelectObject(hdc, f.font_badge);
                 SetTextColor(hdc, COLOR_FUNCTIONAL_RED);
                 let mut rc_badge = RECT { left: 235, top: 16, right: 360, bottom: 36 };
                 DrawTextW(hdc, to_wide_null("[SETUP WIZARD]").as_ptr(), 14, &mut rc_badge, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-                // Subtitle
                 SelectObject(hdc, f.font_subhead);
                 SetTextColor(hdc, COLOR_TEXT_SECONDARY);
                 let mut rc_sub = RECT { left: 65, top: 36, right: 460, bottom: 56 };
@@ -517,7 +534,6 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
                 DrawTextW(hdc, sub_text.as_ptr(), sub_text.len() as i32 - 1, &mut rc_sub, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             }
 
-            // 3. Separator Line at y=62
             let line_pen = CreatePen(PS_SOLID as i32, 1, COLOR_BORDER_DEFAULT);
             let old_p = SelectObject(hdc, line_pen);
             MoveToEx(hdc, 25, 62, std::ptr::null_mut());
@@ -525,14 +541,12 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             SelectObject(hdc, old_p);
             DeleteObject(line_pen);
 
-            // 4. Options Card Box at (25, 76, 460, 230)
             let card_brush = CreateSolidBrush(COLOR_BG_SECONDARY);
             let card_pen = CreatePen(PS_SOLID as i32, 1, COLOR_BORDER_DEFAULT);
             let old_b = SelectObject(hdc, card_brush);
             let old_p = SelectObject(hdc, card_pen);
             RoundRect(hdc, 25, 76, 460, 230, 10, 10);
 
-            // Path Chip Box (38, 90, 447, 122)
             let chip_brush = CreateSolidBrush(COLOR_BG_PRIMARY);
             let chip_pen = CreatePen(PS_SOLID as i32, 1, COLOR_BORDER_DEFAULT);
             SelectObject(hdc, chip_brush);
@@ -565,13 +579,10 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
                 } else {
                     (COLOR_FUNCTIONAL_RED, COLOR_TEXT_PRIMARY, COLOR_FUNCTIONAL_RED)
                 }
+            } else if is_pressed {
+                (COLOR_BG_SECONDARY, COLOR_TEXT_SECONDARY, COLOR_BORDER_HOVER)
             } else {
-                // 취소 버튼
-                if is_pressed {
-                    (COLOR_BG_SECONDARY, COLOR_TEXT_SECONDARY, COLOR_BORDER_HOVER)
-                } else {
-                    (COLOR_BORDER_DEFAULT, COLOR_TEXT_PRIMARY, COLOR_BORDER_HOVER)
-                }
+                (COLOR_BORDER_DEFAULT, COLOR_TEXT_PRIMARY, COLOR_BORDER_HOVER)
             };
 
             let brush = CreateSolidBrush(bg_color);
@@ -586,13 +597,12 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             DeleteObject(pen);
             DeleteObject(brush);
 
-            // 텍스트 출력
             let mut text_buf = [0u16; 64];
             let len = GetWindowTextW(dis.hwndItem, text_buf.as_mut_ptr(), 64);
             if len > 0 {
-                SetBkMode(hdc, 1 /* TRANSPARENT */);
+                SetBkMode(hdc, 1);
                 SetTextColor(hdc, text_color);
-                if let Some(ref f) = FONTS {
+                if let Some(f) = FONTS.as_ref() {
                     SelectObject(hdc, f.font_btn);
                 }
                 let mut rc_mut = rc;
@@ -606,7 +616,7 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             let hdc = wparam as HDC;
             let hwnd_ctrl = lparam as HWND;
 
-            if let Some(ref c) = CONTROLS {
+            if let Some(c) = CONTROLS.as_ref() {
                 if hwnd_ctrl == c.h_lbl_path {
                     SetBkColor(hdc, COLOR_BG_PRIMARY);
                     SetTextColor(hdc, COLOR_TEXT_PRIMARY);
@@ -632,8 +642,7 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
             match id {
                 IDC_BTN_INSTALL => {
                     if IS_FINISHED.load(Ordering::SeqCst) {
-                        // [마침] 버튼 동작
-                        let should_launch = if let Some(ref c) = CONTROLS {
+                        let should_launch = if let Some(c) = CONTROLS.as_ref() {
                             SendMessageW(c.h_chk_launch, BM_GETCHECK, 0, 0) == BST_CHECKED as isize
                         } else {
                             true
@@ -645,7 +654,6 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
                         }
                         DestroyWindow(hwnd);
                     } else {
-                        // [설치 시작] 동작
                         perform_installation(hwnd);
                     }
                 }
@@ -673,12 +681,12 @@ unsafe extern "system" fn wizard_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, 
 
 fn perform_installation(_hwnd: HWND) {
     unsafe {
-        let (create_desktop, create_startmenu) = if let Some(ref c) = CONTROLS {
+        let (create_desktop, create_startmenu) = if let Some(c) = CONTROLS.as_ref() {
             EnableWindow(c.h_btn_install, 0);
             InvalidateRect(c.h_btn_install, std::ptr::null(), 1);
             EnableWindow(c.h_btn_cancel, 0);
             InvalidateRect(c.h_btn_cancel, std::ptr::null(), 1);
-            SetWindowTextW(c.h_lbl_status, to_wide_null("설치 진행 중: 기존 프로세스 정리...").as_ptr());
+            SetWindowTextW(c.h_lbl_status, to_wide_null("설치 진행 중: 기존 프로세스 및 네트워크 정리...").as_ptr());
             SendMessageW(c.h_progress, PBM_SETPOS, 20, 0);
 
             (
@@ -689,60 +697,75 @@ fn perform_installation(_hwnd: HWND) {
             (true, true)
         };
 
-        // 1. 기존 프로세스 종료
+        let install_dir = get_install_dir();
+        let target_exe = install_dir.join("freeview.exe");
+        let target_loader = install_dir.join("WebView2Loader.dll");
+        let target_uninst = install_dir.join("uninstall.exe");
+        let target_ico = install_dir.join("logo.ico");
+
+        // 1. 기존 실행 중인 프로세스의 프록시 설정 선복원 후 종료
+        if target_exe.exists() {
+            let _ = Command::new(&target_exe)
+                .creation_flags(CREATE_NO_WINDOW)
+                .arg("--restore")
+                .output();
+        }
         let _ = Command::new("taskkill")
             .creation_flags(CREATE_NO_WINDOW)
             .args(["/F", "/IM", "freeview.exe"])
             .output();
 
         // 2. 디렉터리 생성 및 파일 쓰기
-        let install_dir = get_install_dir();
         let _ = fs::create_dir_all(&install_dir);
 
-        if let Some(ref c) = CONTROLS {
+        if let Some(c) = CONTROLS.as_ref() {
             SetWindowTextW(c.h_lbl_status, to_wide_null("설치 진행 중: 바이너리 및 라이브러리 복사...").as_ptr());
             SendMessageW(c.h_progress, PBM_SETPOS, 50, 0);
         }
 
-        let target_exe = install_dir.join("freeview.exe");
-        let target_loader = install_dir.join("WebView2Loader.dll");
-        let target_uninst = install_dir.join("uninstall.exe");
-        let target_ico = install_dir.join("logo.ico");
-
         if let Err(e) = fs::write(&target_exe, FREEVIEW_EXE_BYTES) {
             let msg = format!("freeview.exe 쓰기 실패: {}", e);
-            if let Some(ref c) = CONTROLS {
+            if let Some(c) = CONTROLS.as_ref() {
                 SetWindowTextW(c.h_lbl_status, to_wide_null(&msg).as_ptr());
                 EnableWindow(c.h_btn_cancel, 1);
             }
             return;
         }
 
-        // WebView2Loader.dll 복사
-        let _ = fs::write(&target_loader, WEBVIEW2_LOADER_BYTES);
+        if let Err(e) = fs::write(&target_loader, WEBVIEW2_LOADER_BYTES) {
+            let msg = format!("WebView2Loader.dll 쓰기 실패: {}", e);
+            if let Some(c) = CONTROLS.as_ref() {
+                SetWindowTextW(c.h_lbl_status, to_wide_null(&msg).as_ptr());
+                EnableWindow(c.h_btn_cancel, 1);
+            }
+            return;
+        }
+
         let _ = fs::write(&target_ico, LOGO_ICO_BYTES);
 
-        // 현재 설치 프로그램을 uninstall.exe로 복사
         if let Ok(setup_exe) = std::env::current_exe() {
             let _ = fs::copy(setup_exe, &target_uninst);
         }
 
-        if let Some(ref c) = CONTROLS {
+        if let Some(c) = CONTROLS.as_ref() {
             SetWindowTextW(c.h_lbl_status, to_wide_null("설치 진행 중: 바로가기 및 시스템 등록...").as_ptr());
             SendMessageW(c.h_progress, PBM_SETPOS, 80, 0);
         }
 
-        // 3. 바로가기 생성 (cmd 창 절대 안 뜸)
+        // 3. 바로가기 생성 (Win32 SHGetFolderPathW + 단일 PowerShell 배치 호출)
+        let mut shortcuts = Vec::new();
         if create_desktop {
-            if let Some(desktop) = get_special_folder("Desktop") {
-                create_shortcut(&target_exe, &target_ico, &desktop.join("FreeView.lnk"));
+            if let Some(desktop) = get_special_folder(CSIDL_DESKTOPDIRECTORY as i32) {
+                shortcuts.push(desktop.join("FreeView.lnk"));
             }
         }
-
         if create_startmenu {
-            if let Some(programs) = get_special_folder("Programs") {
-                create_shortcut(&target_exe, &target_ico, &programs.join("FreeView.lnk"));
+            if let Some(programs) = get_special_folder(CSIDL_PROGRAMS as i32) {
+                shortcuts.push(programs.join("FreeView.lnk"));
             }
+        }
+        if !shortcuts.is_empty() {
+            create_shortcuts_batch(&target_exe, &target_ico, &shortcuts);
         }
 
         // 4. 제어판 언인스톨러 등록
@@ -751,7 +774,7 @@ fn perform_installation(_hwnd: HWND) {
         // 5. 완료 상태 전환
         IS_FINISHED.store(true, Ordering::SeqCst);
 
-        if let Some(ref c) = CONTROLS {
+        if let Some(c) = CONTROLS.as_ref() {
             SendMessageW(c.h_progress, PBM_SETPOS, 100, 0);
             SetWindowTextW(c.h_lbl_status, to_wide_null("✓ 설치 완료! [마침]을 누르면 FreeView가 실행됩니다.").as_ptr());
             SetWindowTextW(c.h_btn_install, to_wide_null("마침 (&F)").as_ptr());
@@ -766,27 +789,29 @@ fn do_uninstall_gui() {
     let install_dir = get_install_dir();
     let target_exe = install_dir.join("freeview.exe");
 
-    // 네트워크 프록시 복원
-    let _ = Command::new(&target_exe)
-        .creation_flags(CREATE_NO_WINDOW)
-        .arg("--restore")
-        .output();
+    // 1. 네트워크 프록시 복원
+    if target_exe.exists() {
+        let _ = Command::new(&target_exe)
+            .creation_flags(CREATE_NO_WINDOW)
+            .arg("--restore")
+            .output();
+    }
 
-    // 프로세스 종료
+    // 2. 프로세스 종료
     let _ = Command::new("taskkill")
         .creation_flags(CREATE_NO_WINDOW)
         .args(["/F", "/IM", "freeview.exe"])
         .output();
 
-    // 바로가기 삭제
-    if let Some(desktop) = get_special_folder("Desktop") {
+    // 3. 바로가기 삭제
+    if let Some(desktop) = get_special_folder(CSIDL_DESKTOPDIRECTORY as i32) {
         let _ = fs::remove_file(desktop.join("FreeView.lnk"));
     }
-    if let Some(programs) = get_special_folder("Programs") {
+    if let Some(programs) = get_special_folder(CSIDL_PROGRAMS as i32) {
         let _ = fs::remove_file(programs.join("FreeView.lnk"));
     }
 
-    // 제어판 키 삭제
+    // 4. 제어판 및 자동실행 레지스트리 키 삭제
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     if let Ok(key) = hkcu.open_subkey_with_flags(r"Software\Microsoft\Windows\CurrentVersion\Uninstall", KEY_WRITE) {
         let _ = key.delete_subkey_all("FreeView");
@@ -796,24 +821,40 @@ fn do_uninstall_gui() {
         let _ = run_key.delete_value("FreeView");
     }
 
-    // 폴더 삭제 스케줄 (cmd 창 숨김)
-    let delete_cmd = format!(
-        "Start-Sleep -Seconds 1; Remove-Item -Recurse -Force '{}'",
-        install_dir.to_string_lossy()
-    );
-    let _ = Command::new("powershell")
-        .creation_flags(CREATE_NO_WINDOW)
-        .args(["-NoProfile", "-Command", &delete_cmd])
-        .spawn();
-
+    // 5. 완료 안내를 먼저 표시해 사용자가 확인을 누른 뒤 uninstall.exe 잠금 없이 폴더를 삭제
     unsafe {
-        windows_sys::Win32::UI::WindowsAndMessaging::MessageBoxW(
+        MessageBoxW(
             std::ptr::null_mut(),
             to_wide_null("FreeView가 시스템에서 완전히 제거되었습니다.").as_ptr(),
             to_wide_null("제거 완료").as_ptr(),
-            windows_sys::Win32::UI::WindowsAndMessaging::MB_OK | windows_sys::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION,
+            MB_OK | MB_ICONINFORMATION,
         );
     }
+
+    let pid = std::process::id();
+    let escaped_dir = install_dir.to_string_lossy().replace('\'', "''");
+    let app_data_dir = std::env::var_os("LOCALAPPDATA")
+        .map(|v| PathBuf::from(v).join("FreeView"))
+        .unwrap_or_default()
+        .to_string_lossy()
+        .replace('\'', "''");
+
+    let delete_cmd = if app_data_dir.is_empty() {
+        format!(
+            "Wait-Process -Id {} -Timeout 10 -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 300; Remove-Item -LiteralPath '{}' -Recurse -Force -ErrorAction SilentlyContinue",
+            pid, escaped_dir
+        )
+    } else {
+        format!(
+            "Wait-Process -Id {} -Timeout 10 -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 300; Remove-Item -LiteralPath '{}' -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath '{}' -Recurse -Force -ErrorAction SilentlyContinue",
+            pid, escaped_dir, app_data_dir
+        )
+    };
+
+    let _ = Command::new("powershell")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["-NoProfile", "-NonInteractive", "-Command", &delete_cmd])
+        .spawn();
 }
 
 fn get_install_dir() -> PathBuf {
@@ -824,29 +865,36 @@ fn get_install_dir() -> PathBuf {
     base.join("Programs").join("FreeView")
 }
 
-fn get_special_folder(folder_name: &str) -> Option<PathBuf> {
-    let script = format!("[Environment]::GetFolderPath('{}')", folder_name);
-    let output = Command::new("powershell")
-        .creation_flags(CREATE_NO_WINDOW)
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()
-        .ok()?;
-    let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !path_str.is_empty() {
-        Some(PathBuf::from(path_str))
-    } else {
-        None
+fn get_special_folder(csidl: i32) -> Option<PathBuf> {
+    let mut buf = [0u16; 260];
+    let hr = unsafe { SHGetFolderPathW(std::ptr::null_mut(), csidl, std::ptr::null_mut(), 0, buf.as_mut_ptr()) };
+    if hr == 0 {
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        let path_str = String::from_utf16_lossy(&buf[..len]);
+        if !path_str.is_empty() {
+            return Some(PathBuf::from(path_str));
+        }
     }
+    None
 }
 
-fn create_shortcut(target_exe: &Path, icon_path: &Path, shortcut_path: &Path) {
-    let script = format!(
-        "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{}'); $s.TargetPath = '{}'; $s.IconLocation = '{}'; $s.WorkingDirectory = '{}'; $s.Save()",
-        shortcut_path.to_string_lossy().replace('\'', "''"),
-        target_exe.to_string_lossy().replace('\'', "''"),
-        icon_path.to_string_lossy().replace('\'', "''"),
-        target_exe.parent().unwrap_or(target_exe).to_string_lossy().replace('\'', "''")
-    );
+fn create_shortcuts_batch(target_exe: &Path, icon_path: &Path, shortcut_paths: &[PathBuf]) {
+    let exe_escaped = target_exe.to_string_lossy().replace('\'', "''");
+    let ico_escaped = icon_path.to_string_lossy().replace('\'', "''");
+    let work_escaped = target_exe
+        .parent()
+        .unwrap_or(target_exe)
+        .to_string_lossy()
+        .replace('\'', "''");
+
+    let mut script = String::from("$ws = New-Object -ComObject WScript.Shell; ");
+    for sc in shortcut_paths {
+        let sc_escaped = sc.to_string_lossy().replace('\'', "''");
+        script.push_str(&format!(
+            "$s = $ws.CreateShortcut('{}'); $s.TargetPath = '{}'; $s.IconLocation = '{}'; $s.WorkingDirectory = '{}'; $s.Save(); ",
+            sc_escaped, exe_escaped, ico_escaped, work_escaped
+        ));
+    }
 
     let _ = Command::new("powershell")
         .creation_flags(CREATE_NO_WINDOW)
@@ -857,8 +905,8 @@ fn create_shortcut(target_exe: &Path, icon_path: &Path, shortcut_path: &Path) {
 fn register_uninstaller(target_exe: &Path, target_uninst: &Path, target_ico: &Path) {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     if let Ok((key, _)) = hkcu.create_subkey(UNINSTALL_KEY_PATH) {
-        let _ = key.set_value("DisplayName", &"FreeView 3.1");
-        let _ = key.set_value("DisplayVersion", &"3.1.0");
+        let _ = key.set_value("DisplayName", &"FreeView 3.2");
+        let _ = key.set_value("DisplayVersion", &"3.2.0");
         let _ = key.set_value("Publisher", &"QuarterPi & knoblab");
         let _ = key.set_value("DisplayIcon", &target_ico.to_string_lossy().as_ref());
         let uninst_cmd = format!("\"{}\" --uninstall", target_uninst.to_string_lossy());
@@ -871,7 +919,7 @@ fn register_uninstaller(target_exe: &Path, target_uninst: &Path, target_ico: &Pa
 
 unsafe fn apply_dark_mode(hwnd: HWND) {
     let dwmapi = LoadLibraryW(to_wide_null("dwmapi.dll").as_ptr());
-    if dwmapi != std::ptr::null_mut() {
+    if !dwmapi.is_null() {
         let func = GetProcAddress(dwmapi, b"DwmSetWindowAttribute\0".as_ptr());
         if let Some(f) = func {
             type DwmSetWindowAttributeFn = unsafe extern "system" fn(HWND, u32, *const std::ffi::c_void, u32) -> i32;
@@ -880,12 +928,13 @@ unsafe fn apply_dark_mode(hwnd: HWND) {
             dwm_set_attr(hwnd, 20, &dark_mode as *const _ as _, 4);
             dwm_set_attr(hwnd, 19, &dark_mode as *const _ as _, 4);
         }
+        FreeLibrary(dwmapi);
     }
 }
 
 unsafe fn apply_dark_theme(hwnd: HWND) {
     let uxtheme = LoadLibraryW(to_wide_null("uxtheme.dll").as_ptr());
-    if uxtheme != std::ptr::null_mut() {
+    if !uxtheme.is_null() {
         let func = GetProcAddress(uxtheme, b"SetWindowTheme\0".as_ptr());
         if let Some(f) = func {
             type SetWindowThemeFn = unsafe extern "system" fn(HWND, *const u16, *const u16) -> i32;
@@ -893,6 +942,7 @@ unsafe fn apply_dark_theme(hwnd: HWND) {
             let theme_name = to_wide_null("DarkMode_Explorer");
             set_theme(hwnd, theme_name.as_ptr(), std::ptr::null());
         }
+        FreeLibrary(uxtheme);
     }
 }
 

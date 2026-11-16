@@ -11,6 +11,8 @@ pub struct AppConfig {
     pub delay_ms: u64,
     pub mode_str: String,
     pub autostart: bool,
+    #[serde(default)]
+    pub debug_logs: bool,
 }
 
 impl Default for AppConfig {
@@ -20,6 +22,7 @@ impl Default for AppConfig {
             delay_ms: 5,
             mode_str: "TlsHeader5".to_string(),
             autostart: true,
+            debug_logs: false,
         }
     }
 }
