@@ -1,7 +1,7 @@
 {
   "name": "freeview-ui",
   "private": true,
-  "version": "3.2.2",
+  "version": "3.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-sans-kr": "^5.3.0",
     "@tauri-apps/api": "^2.2.0",
     "lucide-react": "^0.475.0",
     "react": "^19.0.0",

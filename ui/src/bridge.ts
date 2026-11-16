@@ -16,25 +16,12 @@ export interface StatusPayload {
   error?: string | null;
 }
 
+export interface UpdateCheckResult {
+  status: 'up_to_date' | 'update_available' | 'error';
+  latestVersion?: string | null;
+}
+
 export const appBridge = {
-  minimize: async () => {
-    try {
-      const win = getCurrentWindow();
-      await win.minimize();
-    } catch (e) {
-      console.warn('minimize failed:', e);
-    }
-  },
-
-  close: async () => {
-    try {
-      const win = getCurrentWindow();
-      await win.close();
-    } catch (e) {
-      console.warn('close failed:', e);
-    }
-  },
-
   startDragging: async () => {
     try {
       const win = getCurrentWindow();
@@ -66,15 +53,34 @@ export const appBridge = {
         isServiceRunning: false,
         port: 8080,
         logs: [],
-        version: '3.2.0',
+        version: '3.3.0',
       };
     }
   },
 
-  onLogUpdate: (callback: (log: string) => void): Promise<UnlistenFn> => {
-    return listen<string>('log-update', (event) => {
-      callback(event.payload);
-    });
+  openLogFile: async (): Promise<void> => {
+    try {
+      await invoke('open_log_file');
+    } catch (e) {
+      console.warn('open_log_file failed:', e);
+    }
+  },
+
+  openGithub: async (): Promise<void> => {
+    try {
+      await invoke('open_github');
+    } catch (e) {
+      console.warn('open_github failed:', e);
+    }
+  },
+
+  checkUpdate: async (): Promise<UpdateCheckResult> => {
+    try {
+      return await invoke<UpdateCheckResult>('check_update');
+    } catch (e) {
+      console.warn('check_update failed:', e);
+      return { status: 'error', latestVersion: null };
+    }
   },
 
   onStatusUpdate: (callback: (status: StatusPayload) => void): Promise<UnlistenFn> => {
