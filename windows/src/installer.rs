@@ -7,7 +7,7 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use winreg::enums::{HKEY_CURRENT_USER, KEY_WRITE};
+use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
 use winreg::RegKey;
 
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
@@ -419,7 +419,7 @@ fn run_install_wizard() {
 
         let h_instance = GetModuleHandleW(std::ptr::null());
         let class_name = to_wide_null("FreeViewFigmaInstaller");
-        let title = to_wide_null("FreeView 3.3.1");
+        let title = to_wide_null("FreeView 3.3.2");
         let brush_bg = CreateSolidBrush(CREF_BG);
 
         let wnd_class = WNDCLASSEXW {
@@ -654,12 +654,13 @@ unsafe fn draw_gdi_text_with_alpha(
     h: i32,
     item: &PendingText<'_>,
 ) {
-    SelectObject(hdc, item.font as _);
+    let old_font = SelectObject(hdc, item.font as _);
     SetTextColor(hdc, item.color);
     let mut rc = item.rect.to_rect();
     let wide = to_wide_null(item.text);
     DrawTextW(hdc, wide.as_ptr(), -1, &mut rc, item.flags | DT_NOPREFIX);
     GdiFlush();
+    SelectObject(hdc, old_font);
 
     // ClearType GDI DrawTextW zeroes the alpha byte of touched pixels on a 32bpp DIB.
     // Restore 0xFF alpha across the strictly interior opaque text box.
@@ -716,6 +717,9 @@ unsafe fn render_layered(hwnd: HWND) {
         0,
     );
     if mem_bmp.is_null() || bits_raw.is_null() {
+        if !mem_bmp.is_null() {
+            DeleteObject(mem_bmp as _);
+        }
         DeleteDC(mem_dc);
         ReleaseDC(std::ptr::null_mut(), hdc_screen);
         return;
@@ -824,7 +828,7 @@ unsafe fn render_layered(hwnd: HWND) {
             font: fonts.font_14,
             color: CREF_TITLE,
             rect: topbar_text_rect,
-            text: "FreeView 3.3.1",
+            text: "FreeView 3.3.2",
             flags: DT_CENTER | DT_VCENTER | DT_SINGLELINE,
         },
     );
@@ -1301,6 +1305,38 @@ fn post_progress(hwnd: HWND, pct: u32) {
     }
 }
 
+fn write_file_overwrite(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Ok(meta) = fs::metadata(path) {
+        let mut perms = meta.permissions();
+        if perms.readonly() {
+            perms.set_readonly(false);
+            let _ = fs::set_permissions(path, perms);
+        }
+    }
+    let old_del = path.with_extension("old_del");
+    let _ = fs::remove_file(&old_del);
+
+    let mut last_err = None;
+    for _ in 0..20 {
+        match fs::write(path, bytes) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = Some(e);
+                if path.exists() && fs::rename(path, &old_del).is_ok() {
+                    if fs::write(path, bytes).is_ok() {
+                        let _ = fs::remove_file(&old_del);
+                        return Ok(());
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::Other, "파일 덮어쓰기 실패")
+    }))
+}
+
 fn perform_installation_worker(
     hwnd: HWND,
     install_dir: PathBuf,
@@ -1314,7 +1350,7 @@ fn perform_installation_worker(
 
     post_progress(hwnd, 20);
 
-    // 1. 기존 실행 중인 프로세스의 프록시 설정 선복원 후 종료
+    // 1. 기존 실행 중인 프로세스의 프록시 설정 선복원 후 프로세스 트리 강제 종료
     if target_exe.exists() {
         let _ = Command::new(&target_exe)
             .creation_flags(CREATE_NO_WINDOW)
@@ -1323,12 +1359,16 @@ fn perform_installation_worker(
     }
     let _ = Command::new("taskkill")
         .creation_flags(CREATE_NO_WINDOW)
-        .args(["/F", "/IM", "freeview.exe"])
+        .args(["/F", "/T", "/IM", "freeview.exe"])
+        .output();
+    let _ = Command::new("taskkill")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["/F", "/IM", "uninstall.exe"])
         .output();
 
     post_progress(hwnd, 40);
 
-    // 2. 디렉터리 생성 및 파일 쓰기
+    // 2. 디렉터리 생성 및 파일 덮어쓰기 (잠금 해제 대기·재시도 포함)
     if let Err(e) = fs::create_dir_all(&install_dir) {
         INSTALL_OK.store(false, Ordering::SeqCst);
         unsafe {
@@ -1338,7 +1378,7 @@ fn perform_installation_worker(
         return;
     }
 
-    if let Err(e) = fs::write(&target_exe, FREEVIEW_EXE_BYTES) {
+    if let Err(e) = write_file_overwrite(&target_exe, FREEVIEW_EXE_BYTES) {
         INSTALL_OK.store(false, Ordering::SeqCst);
         unsafe {
             INSTALL_ERR.set(format!("freeview.exe 쓰기 실패: {}", e));
@@ -1349,7 +1389,7 @@ fn perform_installation_worker(
 
     post_progress(hwnd, 65);
 
-    if let Err(e) = fs::write(&target_loader, WEBVIEW2_LOADER_BYTES) {
+    if let Err(e) = write_file_overwrite(&target_loader, WEBVIEW2_LOADER_BYTES) {
         INSTALL_OK.store(false, Ordering::SeqCst);
         unsafe {
             INSTALL_ERR.set(format!("WebView2Loader.dll 쓰기 실패: {}", e));
@@ -1358,10 +1398,14 @@ fn perform_installation_worker(
         return;
     }
 
-    let _ = fs::write(&target_ico, LOGO_ICO_BYTES);
+    let _ = write_file_overwrite(&target_ico, LOGO_ICO_BYTES);
 
     if let Ok(setup_exe) = std::env::current_exe() {
-        let _ = fs::copy(setup_exe, &target_uninst);
+        if let Ok(setup_bytes) = fs::read(&setup_exe) {
+            let _ = write_file_overwrite(&target_uninst, &setup_bytes);
+        } else {
+            let _ = fs::copy(setup_exe, &target_uninst);
+        }
     }
 
     post_progress(hwnd, 82);
@@ -1485,6 +1529,15 @@ fn do_uninstall_gui() {
 }
 
 fn get_default_install_dir() -> PathBuf {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if let Ok(key) = hkcu.open_subkey_with_flags(UNINSTALL_KEY_PATH, KEY_READ) {
+        if let Ok(loc) = key.get_value::<String, _>("InstallLocation") {
+            let trimmed = loc.trim();
+            if !trimmed.is_empty() {
+                return PathBuf::from(trimmed);
+            }
+        }
+    }
     let base = match std::env::var_os("LOCALAPPDATA") {
         Some(val) => PathBuf::from(val),
         None => std::env::temp_dir(),
@@ -1533,7 +1586,7 @@ fn register_uninstaller(target_exe: &Path, target_uninst: &Path, target_ico: &Pa
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     if let Ok((key, _)) = hkcu.create_subkey(UNINSTALL_KEY_PATH) {
         let _ = key.set_value("DisplayName", &"FreeView 3.3");
-        let _ = key.set_value("DisplayVersion", &"3.3.1");
+        let _ = key.set_value("DisplayVersion", &"3.3.2");
         let _ = key.set_value("Publisher", &"QuarterPi & knoblab");
         let _ = key.set_value("DisplayIcon", &target_ico.to_string_lossy().as_ref());
         let uninst_cmd = format!("\"{}\" --uninstall", target_uninst.to_string_lossy());

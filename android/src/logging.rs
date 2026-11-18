@@ -5,7 +5,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::AppHandle;
 
 use crate::guard::get_app_dir;
 
@@ -16,7 +16,6 @@ static DEBUG_LOGS_ENABLED: AtomicBool = AtomicBool::new(false);
 
 struct LogState {
     lines: VecDeque<String>,
-    app_handle: Option<AppHandle>,
     writer: Option<BufWriter<File>>,
     written_bytes: u64,
 }
@@ -51,20 +50,13 @@ pub fn init_logger() {
     if let Ok(mut lock) = LOG_STATE.lock() {
         *lock = Some(LogState {
             lines: VecDeque::with_capacity(MAX_LOG_LINES),
-            app_handle: None,
             writer,
             written_bytes: existing_len,
         });
     }
 }
 
-pub fn set_app_handle(handle: AppHandle) {
-    if let Ok(mut lock) = LOG_STATE.lock() {
-        if let Some(state) = lock.as_mut() {
-            state.app_handle = Some(handle);
-        }
-    }
-}
+pub fn set_app_handle(_handle: AppHandle) {}
 
 pub fn set_debug_logs(enabled: bool) {
     DEBUG_LOGS_ENABLED.store(enabled, Ordering::Relaxed);
@@ -85,7 +77,6 @@ pub fn add_log(msg: &str) {
     let now = get_local_time_string();
     let formatted = format!("[{}] {}", now, msg);
 
-    let mut handle_to_emit = None;
     if let Ok(mut lock) = LOG_STATE.lock() {
         if let Some(state) = lock.as_mut() {
             // 파일 로테이션 (1 MB 초과 시 app.log.old로 회전)
@@ -108,15 +99,7 @@ pub fn add_log(msg: &str) {
             if state.lines.len() >= MAX_LOG_LINES {
                 state.lines.pop_front();
             }
-            state.lines.push_back(formatted.clone());
-            handle_to_emit = state.app_handle.clone();
-        }
-    }
-
-    // 창이 실제로 생성되어 있을 때만 UI로 IPC 이벤트 전송
-    if let Some(app) = handle_to_emit {
-        if app.get_webview_window("main").is_some() {
-            let _ = app.emit("log-update", formatted);
+            state.lines.push_back(formatted);
         }
     }
 }

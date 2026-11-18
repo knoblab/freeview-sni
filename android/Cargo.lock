@@ -1106,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "freeview"
-version = "3.3.1"
+version = "3.3.2"
 dependencies = [
  "futures",
  "hickory-resolver",

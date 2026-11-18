@@ -8,7 +8,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
-import android.os.ParcelFileDescriptor
 
 class FreeViewVpnService : VpnService() {
     companion object {
@@ -27,8 +26,6 @@ class FreeViewVpnService : VpnService() {
             System.loadLibrary("freeview_lib")
         }
     }
-
-    private var vpnInterface: ParcelFileDescriptor? = null
 
     private external fun nativeStartTun(tunFd: Int, mode: String, delayMs: Long): Boolean
     private external fun nativeStopTun()
@@ -94,11 +91,6 @@ class FreeViewVpnService : VpnService() {
 
     private fun stopVpn() {
         nativeStopTun()
-        try {
-            vpnInterface?.close()
-        } catch (_: Exception) {
-        }
-        vpnInterface = null
         isRunning = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

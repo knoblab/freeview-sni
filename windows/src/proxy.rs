@@ -95,6 +95,7 @@ impl ProxyServer {
         desync_config: DesyncConfig,
     ) {
         let mut shutdown_rx = self.shutdown_rx.clone();
+        let mut client_tasks = JoinSet::new();
 
         loop {
             tokio::select! {
@@ -110,19 +111,22 @@ impl ProxyServer {
                             let desync_config = desync_config.clone();
                             let active_connections = self.active_connections.clone();
                             let port = self.port;
-                            let task_shutdown = self.shutdown_rx.clone();
+                            let mut task_shutdown = self.shutdown_rx.clone();
 
-                            tokio::spawn(async move {
+                            client_tasks.spawn(async move {
                                 let _permit = permit;
                                 let _guard = ConnectionGuard::new(active_connections);
-                                let _ = handle_client(
-                                    client_stream,
-                                    port,
-                                    resolver,
-                                    desync_config,
-                                    task_shutdown,
-                                )
-                                .await;
+                                let client_shut = task_shutdown.clone();
+                                tokio::select! {
+                                    _ = handle_client(
+                                        client_stream,
+                                        port,
+                                        resolver,
+                                        desync_config,
+                                        client_shut,
+                                    ) => {}
+                                    _ = task_shutdown.changed() => {}
+                                }
                             });
                         }
                         Err(_) => {
@@ -130,6 +134,7 @@ impl ProxyServer {
                         }
                     }
                 }
+                Some(_) = client_tasks.join_next(), if !client_tasks.is_empty() => {}
                 _ = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
                         break;
@@ -137,6 +142,8 @@ impl ProxyServer {
                 }
             }
         }
+
+        client_tasks.abort_all();
     }
 
     #[allow(dead_code)]

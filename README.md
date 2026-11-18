@@ -1,12 +1,17 @@
-# FreeView 3.3.1 (Minimal Concept UI & Native Rust Edition)
+# FreeView 3.3.2 (Minimal Concept UI & Native Rust Edition)
 
-Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI 기반 네트워크 차단을 우회하여 자유로운 웹 서핑과 DNS 보안을 제공하는 초경량 유저스페이스 터널링 프로그램입니다.
+Windows 및 Android 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI 기반 네트워크 차단을 우회하여 자유로운 웹 서핑과 DNS 보안을 제공하는 초경량 유저스페이스 터널링 프로그램입니다.
 
 **Figma 컨셉 미니멀 UI (`350 × 205`, 로컬 `IBM Plex Sans KR` 번들)**와 **트레이/검색 중심 On-Demand WebView2 생명주기(창 외부 클릭 시 WebView2 즉시 종료)**를 결합해, 사용성 높은 팝업 경험과 백그라운드 초경량 상주를 동시에 제공합니다.
 
 ---
 
-## 🌟 주요 특징 및 3.3.1 개선 사항
+## 🌟 주요 특징 및 3.3.2 개선 사항
+
+* **메모리 · 파일 디스크립터(FD) 누수 방지 및 안정성 강화 (3.3.2)**:
+  * **Android VpnService TUN 엔진 리소스 보호**: UDP 유한 채널(`512`) 및 동시 UDP 소켓 상한(`128`) 적용으로 QUIC/DNS 폭주 시 FD 고갈 방지, TCP 동시 연결 상한(`256`)·유휴 타임아웃(`180초`)·`32 KB` 핸드셰이크 버퍼 조기 해제(`drop`), 미사용 데스크톱 `Controller` 런타임 제거, `tun_fd` RAII 즉시 소유권 확보 및 재시작 경합(`TUN_GEN`) 방지.
+  * **Windows 프록시 및 UI 태스크 정리 강화**: 서비스 중지 시 대기 중인 연결(`handle_client`) 즉시 취소(`JoinSet` + `shutdown_rx`), 포커스 디바운스 비동기 태스크 전환, 미구독 IPC 로그 브로드캐스트 제거, 설치 마법사 GDI 폰트/DIB 핸들 정리 보완.
+* **창 경계 안티엘리어싱 및 ClearType / HiDPI 선명도 개선 (3.3.1)**:
 
 * **창 경계 안티엘리어싱 및 ClearType / HiDPI 선명도 개선 (3.3.1)**:
   * **설치 마법사 Per-Pixel Alpha 레이어드 렌더링 & HiDPI 지원**: `WS_EX_LAYERED` + `UpdateLayeredWindow`(`PixelFormat32bppPARGB` GDI+ 안티엘리어싱)와 `PerMonitorV2` HiDPI 인식, 네이티브 Windows ClearType(`CLEARTYPE_QUALITY`) + 32비트 DIB 알파 복원을 적용해 모서리 계단 현상과 글씨 흐림을 제거했습니다.
@@ -19,7 +24,7 @@ Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI �
   * 작업 표시줄 노출(`skipTaskbar`)과 최소화 버튼을 제거하고, 시스템 트레이 클릭 또는 프로그램 재실행(Windows 검색/바로가기)으로만 창을 엽니다.
   * 창 바깥을 클릭해 포커스를 잃으면 창을 숨기는 대신 WebView2 프로세스를 완전히 종료하여 백그라운드 메모리 점유를 즉시 해제합니다.
 * **컨셉 일치형 4단계 설치 마법사 (3.3.0 / 3.3.1)**:
-  * `FreeView Setup 3.3.1.exe`를 메인 UI와 동일한 `350 × 205` 라이트 톤 보더리스 GDI+ 4단계 마법사(경로 선택 → 자동 실행/바로가기 옵션 → 설치 진행률 바 → 완료/실행)로 전면 재구현했습니다.
+  * `FreeView Setup 3.3.2.exe`를 메인 UI와 동일한 `350 × 205` 라이트 톤 보더리스 GDI+ 4단계 마법사(경로 선택 → 자동 실행/바로가기 옵션 → 설치 진행률 바 → 완료/실행)로 전면 재구현했습니다.
 * **고대역폭 프록시 릴레이 & 지연시간 최적화 (3.2.2)**:
   * **적응형 릴레이 버퍼 (`16 KB -> 128 KB`) & 타이머 스래싱 제거**: 유휴/소형 연결의 메모리 효율을 유지하면서 대용량 스트리밍 시 시스템콜과 Tokio 타이머 휠 부하를 대폭 절감했습니다.
   * **멀티스레드 Tokio 런타임 스케줄링 & `opt-level = 3`**: 코어 수에 맞춘 워커 스레드 확장(4~8개) 및 속도 최적화 컴파일 프로파일을 적용했습니다.
@@ -42,7 +47,7 @@ Windows 환경에서 심층 패킷 검사(DPI, Deep Packet Inspection) 및 SNI �
 ## 🚀 다운로드 및 설치
 
 ### 1. 원클릭 설치 프로그램 (권장)
-루트 폴더의 **`FreeView Setup 3.3.1.exe`**를 실행하면 간편하게 설치가 완료됩니다:
+루트 폴더의 **`FreeView Setup 3.3.2.exe`**를 실행하면 간편하게 설치가 완료됩니다:
 * 설치 경로: `%LOCALAPPDATA%\Programs\FreeView` (관리자 권한 UAC 창 없이 설치, 폴더 변경 가능)
 * 바탕화면 및 시작 메뉴 바로가기 생성 옵션 제공
 * 제어판 "앱 및 기능" 등록

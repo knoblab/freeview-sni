@@ -11,14 +11,19 @@ mod tls;
 #[cfg(target_os = "android")]
 mod tun_vpn;
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, WebviewWindowBuilder};
 
 use config::AppConfig;
-use controller::{Controller, StatusPayload};
+use controller::StatusPayload;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use controller::Controller;
 use guard::{register_panic_hook, startup_self_heal};
 use logging::{add_log, flush_logs, get_recent_logs, init_logger, set_app_handle};
+#[cfg(any(target_os = "android", target_os = "ios"))]
+use logging::set_debug_logs;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -76,6 +81,7 @@ pub struct UpdateCheckResult {
 }
 
 pub struct AppState {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub controller: Arc<Mutex<Controller>>,
     pub desync_mode: String,
     pub delay_ms: u64,
@@ -333,7 +339,7 @@ async fn toggle_service(
             .map_err(|e| format!("VPN 호출 실패: {}", e));
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let ctrl_arc = state.controller.clone();
         tauri::async_runtime::spawn_blocking(move || {
@@ -350,6 +356,12 @@ async fn toggle_service(
         .await
         .map_err(|e| e.to_string())
     }
+
+    #[cfg(target_os = "ios")]
+    {
+        let _ = (app, state);
+        Err("iOS는 지원되지 않습니다.".to_string())
+    }
 }
 
 #[tauri::command]
@@ -357,7 +369,10 @@ fn get_initial_state(state: State<'_, AppState>) -> InitialState {
     #[cfg(target_os = "android")]
     let (is_running, port) = (tun_vpn::is_tun_running(), 0);
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "ios")]
+    let (is_running, port) = (false, 0);
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let (is_running, port) = if let Ok(ctrl) = state.controller.lock() {
         (ctrl.is_running(), ctrl.get_port())
     } else {
@@ -550,8 +565,8 @@ pub fn run() {
                     }
                     let seq = BLUR_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
                     let win_clone = window.clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(80));
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
                         if BLUR_SEQ.load(Ordering::SeqCst) == seq
                             && !win_clone.is_focused().unwrap_or(false)
                         {
@@ -639,11 +654,10 @@ pub fn run() {
         register_panic_hook();
 
         let config = AppConfig::default();
+        set_debug_logs(config.debug_logs);
         let desync_mode = config.mode_str.clone();
         let delay_ms = config.delay_ms;
-        let controller = Controller::new(config);
         let app_state = AppState {
-            controller: Arc::new(Mutex::new(controller)),
             desync_mode,
             delay_ms,
         };
@@ -763,7 +777,7 @@ fn setup_tray(app: &AppHandle, initial_debug_logs: bool) -> Result<(), Box<dyn s
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "toggle" => {
                 let app_clone = app.clone();
-                std::thread::spawn(move || {
+                tauri::async_runtime::spawn_blocking(move || {
                     if let Some(state) = app_clone.try_state::<AppState>() {
                         if let Ok(mut ctrl) = state.controller.lock() {
                             ctrl.toggle_service();

@@ -40,6 +40,137 @@ static BLUR_SEQ: AtomicU64 = AtomicU64::new(0);
 static LAST_BLUR_CLOSE_MS: AtomicU64 = AtomicU64::new(0);
 static HEADLESS_STOP: AtomicBool = AtomicBool::new(false);
 static START_INSTANT: OnceLock<Instant> = OnceLock::new();
+static WEBVIEW2_MODULE: OnceLock<usize> = OnceLock::new();
+
+const WEBVIEW2_LOADER_BYTES: &[u8] = include_bytes!("../WebView2Loader.dll");
+const E_FAIL_HRESULT: i32 = 0x8000_4005u32 as i32;
+
+fn get_webview2_module() -> isize {
+    *WEBVIEW2_MODULE.get_or_init(|| {
+        use windows_sys::Win32::System::LibraryLoader::LoadLibraryW;
+
+        let local_name: Vec<u16> = "WebView2Loader.dll\0".encode_utf16().collect();
+        let h_local = unsafe { LoadLibraryW(local_name.as_ptr()) };
+        if !h_local.is_null() {
+            return h_local as usize;
+        }
+
+        let dll_path = guard::get_app_dir().join("WebView2Loader.dll");
+        let needs_write = std::fs::metadata(&dll_path)
+            .map(|m| m.len() != WEBVIEW2_LOADER_BYTES.len() as u64)
+            .unwrap_or(true);
+        if needs_write {
+            let _ = std::fs::write(&dll_path, WEBVIEW2_LOADER_BYTES);
+        }
+
+        let path_w: Vec<u16> = dll_path
+            .to_string_lossy()
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let h_app = unsafe { LoadLibraryW(path_w.as_ptr()) };
+        h_app as usize
+    }) as isize
+}
+
+unsafe fn resolve_webview2_proc(name: &[u8]) -> Option<*const core::ffi::c_void> {
+    use windows_sys::Win32::System::LibraryLoader::GetProcAddress;
+
+    let h_mod = get_webview2_module();
+    if h_mod == 0 {
+        return None;
+    }
+    GetProcAddress(h_mod as _, name.as_ptr()).map(|f| f as *const core::ffi::c_void)
+}
+
+#[no_mangle]
+pub unsafe extern "system" fn CreateCoreWebView2EnvironmentWithOptions(
+    browser_executable_folder: *const u16,
+    user_data_folder: *const u16,
+    environment_options: *mut core::ffi::c_void,
+    environment_created_handler: *mut core::ffi::c_void,
+) -> i32 {
+    type FnType = unsafe extern "system" fn(
+        *const u16,
+        *const u16,
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> i32;
+    match resolve_webview2_proc(b"CreateCoreWebView2EnvironmentWithOptions\0") {
+        Some(p) => {
+            let f: FnType = std::mem::transmute(p);
+            f(
+                browser_executable_folder,
+                user_data_folder,
+                environment_options,
+                environment_created_handler,
+            )
+        }
+        None => E_FAIL_HRESULT,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "system" fn CreateCoreWebView2Environment(
+    environment_created_handler: *mut core::ffi::c_void,
+) -> i32 {
+    type FnType = unsafe extern "system" fn(*mut core::ffi::c_void) -> i32;
+    match resolve_webview2_proc(b"CreateCoreWebView2Environment\0") {
+        Some(p) => {
+            let f: FnType = std::mem::transmute(p);
+            f(environment_created_handler)
+        }
+        None => E_FAIL_HRESULT,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "system" fn GetAvailableCoreWebView2BrowserVersionString(
+    browser_executable_folder: *const u16,
+    version_info: *mut *mut u16,
+) -> i32 {
+    type FnType = unsafe extern "system" fn(*const u16, *mut *mut u16) -> i32;
+    match resolve_webview2_proc(b"GetAvailableCoreWebView2BrowserVersionString\0") {
+        Some(p) => {
+            let f: FnType = std::mem::transmute(p);
+            f(browser_executable_folder, version_info)
+        }
+        None => E_FAIL_HRESULT,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "system" fn GetAvailableCoreWebView2BrowserVersionStringWithOptions(
+    browser_executable_folder: *const u16,
+    environment_options: *mut core::ffi::c_void,
+    version_info: *mut *mut u16,
+) -> i32 {
+    type FnType =
+        unsafe extern "system" fn(*const u16, *mut core::ffi::c_void, *mut *mut u16) -> i32;
+    match resolve_webview2_proc(b"GetAvailableCoreWebView2BrowserVersionStringWithOptions\0") {
+        Some(p) => {
+            let f: FnType = std::mem::transmute(p);
+            f(browser_executable_folder, environment_options, version_info)
+        }
+        None => E_FAIL_HRESULT,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "system" fn CompareBrowserVersions(
+    version1: *const u16,
+    version2: *const u16,
+    result: *mut i32,
+) -> i32 {
+    type FnType = unsafe extern "system" fn(*const u16, *const u16, *mut i32) -> i32;
+    match resolve_webview2_proc(b"CompareBrowserVersions\0") {
+        Some(p) => {
+            let f: FnType = std::mem::transmute(p);
+            f(version1, version2, result)
+        }
+        None => E_FAIL_HRESULT,
+    }
+}
 
 #[derive(Serialize)]
 pub struct InitialState {
@@ -449,8 +580,8 @@ fn main() {
                 }
                 let seq = BLUR_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
                 let win_clone = window.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(80));
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
                     if BLUR_SEQ.load(Ordering::SeqCst) == seq
                         && !win_clone.is_focused().unwrap_or(false)
                     {
@@ -628,7 +759,7 @@ fn setup_tray(app: &AppHandle, initial_debug_logs: bool) -> Result<(), Box<dyn s
                 }
                 "logs" => {
                     let dir = guard::get_app_dir();
-                    let _ = std::process::Command::new("explorer").arg(dir).spawn();
+                    shell_open(&dir.to_string_lossy());
                 }
                 "exit" => {
                     app.exit(0);
@@ -673,11 +804,11 @@ mod tests {
 
     #[test]
     fn test_version_comparison() {
-        assert!(is_newer_version("v3.3.2", "3.3.1"));
-        assert!(is_newer_version("3.4.0", "3.3.1"));
+        assert!(is_newer_version("v3.3.3", "3.3.2"));
+        assert!(is_newer_version("3.4.0", "3.3.2"));
         assert!(is_newer_version("4.0.0", "3.9.9"));
-        assert!(!is_newer_version("v3.3.1", "3.3.1"));
-        assert!(!is_newer_version("3.3.0", "3.3.1"));
-        assert!(!is_newer_version("v3.3.1-test", "3.3.1"));
+        assert!(!is_newer_version("v3.3.2", "3.3.2"));
+        assert!(!is_newer_version("3.3.1", "3.3.2"));
+        assert!(!is_newer_version("v3.3.2-test", "3.3.2"));
     }
 }

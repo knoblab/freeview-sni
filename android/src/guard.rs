@@ -20,6 +20,7 @@ pub struct ServiceState {
     pub timestamp: u64,
 }
 
+#[allow(dead_code)]
 pub fn set_app_dir(path: PathBuf) {
     let _ = fs::create_dir_all(&path);
     let _ = APP_DIR.set(path);

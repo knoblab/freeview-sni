@@ -53,7 +53,7 @@ export const appBridge = {
         isServiceRunning: false,
         port: 8080,
         logs: [],
-        version: '3.3.0',
+        version: '3.3.2',
       };
     }
   },

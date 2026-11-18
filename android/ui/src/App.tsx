@@ -4,7 +4,7 @@ import { appBridge, IS_ANDROID } from './bridge';
 export default function App() {
   const [isServiceRunning, setIsServiceRunning] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
-  const [version, setVersion] = useState('3.3.1');
+  const [version, setVersion] = useState('3.3.2');
   const [desyncMode, setDesyncMode] = useState('TlsHeader5');
   const [delayMs, setDelayMs] = useState(2);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
